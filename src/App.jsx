@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from "react";
 
 const THEME_KEY = "aerotrade.theme";
 const NICKNAME_KEY = "aerotrade.nickname";
+const EXECUTION_MODE_KEY = "aerotrade.executionMode";
+const AUTH_SESSION_KEY = "aerotrade.authSession";
 
 const navItems = [
   { page: "dashboard", label: "대시보드", icon: "dashboard" },
@@ -145,6 +147,49 @@ const holdingQuantities = {
   "373220": 5
 };
 
+const accountProfiles = {
+  real: {
+    label: "실전 투자 모드",
+    shortLabel: "실전",
+    orderableCash: 5000000,
+    holdings: holdingQuantities,
+    dashboardCards: [
+      ["총 평가금액", "124,820,000원", "+1.82%", "secondary"],
+      ["당일 실현손익", "+842,000원", "체결 반영", "secondary"],
+      ["보유 종목", "8개", "KOSPI 중심", "primary"],
+      ["위험 노출", "낮음", "한도 38%", "tertiary"]
+    ],
+    riskBars: [
+      ["일중 손실 한도", "38%", "bg-secondary"],
+      ["주문 대기 금액", "24%", "bg-primary"],
+      ["전략 집중도", "51%", "bg-tertiary"]
+    ]
+  },
+  mock: {
+    label: "모의 투자 모드",
+    shortLabel: "모의",
+    orderableCash: 20000000,
+    holdings: {
+      "005930": 120,
+      "000660": 30,
+      "035420": 14,
+      "035720": 80,
+      "373220": 10
+    },
+    dashboardCards: [
+      ["총 평가금액", "52,430,000원", "+4.36%", "secondary"],
+      ["당일 실현손익", "+214,000원", "모의 체결", "secondary"],
+      ["보유 종목", "12개", "테스트 포트폴리오", "primary"],
+      ["위험 노출", "보통", "한도 57%", "tertiary"]
+    ],
+    riskBars: [
+      ["일중 손실 한도", "57%", "bg-tertiary"],
+      ["주문 대기 금액", "31%", "bg-primary"],
+      ["전략 집중도", "44%", "bg-secondary"]
+    ]
+  }
+};
+
 const initialMarketOrders = [
   {
     id: 1004,
@@ -229,6 +274,28 @@ const strategiesSeed = [
   }
 ];
 
+const strategiesByModeSeed = {
+  real: strategiesSeed,
+  mock: [
+    {
+      ...strategiesSeed[0],
+      id: 101,
+      status: "중지",
+      returnRate: "+4.2%",
+      winRate: "58%",
+      description: "모의 계좌에서 장 초반 돌파 조건을 낮은 주문 한도로 검증합니다."
+    },
+    {
+      ...strategiesSeed[2],
+      id: 102,
+      status: "활성",
+      returnRate: "+9.8%",
+      winRate: "66%",
+      description: "모의 계좌 기준으로 수급 조건과 분할 진입 규칙을 테스트합니다."
+    }
+  ]
+};
+
 const recordRows = [
   ["2026-06-21 14:58:12", "주문", "시가 돌파 전략", "매수 주문 3건 체결, 평균 체결가 반영 완료", "완료"],
   ["2026-06-21 13:42:07", "전략", "수급 추적 전략", "기관 순매수 조건 충족, 다음 체결 신호 대기", "대기"],
@@ -259,6 +326,22 @@ function getInitialNickname() {
     return localStorage.getItem(NICKNAME_KEY)?.trim() || "";
   } catch {
     return "";
+  }
+}
+
+function getInitialExecutionMode() {
+  try {
+    return localStorage.getItem(EXECUTION_MODE_KEY) === "mock" ? "mock" : "real";
+  } catch {
+    return "real";
+  }
+}
+
+function getInitialAuthSession() {
+  try {
+    return localStorage.getItem(AUTH_SESSION_KEY) === "active";
+  } catch {
+    return false;
   }
 }
 
@@ -318,6 +401,9 @@ function App() {
   const [route, setRoute] = useState(readRoute);
   const [theme, setThemeState] = useState(getInitialTheme);
   const [nickname, setNicknameState] = useState(getInitialNickname);
+  const [executionMode, setExecutionModeState] = useState(getInitialExecutionMode);
+  const [strategiesByMode, setStrategiesByMode] = useState(strategiesByModeSeed);
+  const [isAuthenticated, setIsAuthenticated] = useState(getInitialAuthSession);
   const [clock, setClock] = useState("");
 
   useEffect(() => {
@@ -363,37 +449,81 @@ function App() {
     setRoute({ page, anchor });
   }
 
+  function signIn() {
+    setIsAuthenticated(true);
+    localStorage.setItem(AUTH_SESSION_KEY, "active");
+    navigate("dashboard");
+  }
+
+  function signOut() {
+    setIsAuthenticated(false);
+    localStorage.removeItem(AUTH_SESSION_KEY);
+    navigate("login");
+  }
+
   function updateNickname(nextName) {
     const cleanName = nextName.trim();
     setNicknameState(cleanName);
     if (cleanName) localStorage.setItem(NICKNAME_KEY, cleanName);
   }
 
-  const profileName = nickname || "프로필";
+  function updateExecutionMode(nextMode) {
+    setExecutionModeState(nextMode);
+    localStorage.setItem(EXECUTION_MODE_KEY, nextMode);
+  }
 
-  if (route.page === "login") {
-    return <LoginPage navigate={navigate} updateNickname={updateNickname} />;
+  function updateCurrentStrategies(updater) {
+    setStrategiesByMode((current) => ({
+      ...current,
+      [executionMode]: typeof updater === "function" ? updater(current[executionMode]) : updater
+    }));
+  }
+
+  const profileName = nickname || "프로필";
+  const accountProfile = accountProfiles[executionMode];
+  const currentStrategies = strategiesByMode[executionMode] || [];
+  const otherMode = executionMode === "real" ? "mock" : "real";
+  const appRoute = isAuthenticated && route.page === "login" ? { page: "dashboard", anchor: "" } : route;
+
+  if (!isAuthenticated) {
+    return <LoginPage onSignIn={signIn} updateNickname={updateNickname} />;
   }
 
   return (
-    <Shell route={route} navigate={navigate} profileName={profileName} clock={clock}>
-      {route.page === "dashboard" && <DashboardPage navigate={navigate} />}
-      {route.page === "market" && <MarketPage />}
-      {route.page === "strategy" && <StrategyPage navigate={navigate} favoriteGroups={initialGroups} />}
-      {route.page === "record" && <RecordPage />}
-      {route.page === "setting" && (
+    <Shell route={appRoute} navigate={navigate} profileName={profileName} clock={clock} executionMode={executionMode} onSignOut={signOut}>
+      {appRoute.page === "dashboard" && <DashboardPage navigate={navigate} accountProfile={accountProfile} strategies={currentStrategies} />}
+      {appRoute.page === "market" && <MarketPage accountProfile={accountProfile} />}
+      {appRoute.page === "strategy" && (
+        <StrategyPage
+          navigate={navigate}
+          favoriteGroups={initialGroups}
+          executionMode={executionMode}
+          strategies={currentStrategies}
+          setStrategies={updateCurrentStrategies}
+          sourceStrategies={strategiesByMode[otherMode] || []}
+          sourceMode={otherMode}
+        />
+      )}
+      {appRoute.page === "record" && <RecordPage />}
+      {appRoute.page === "setting" && (
         <SettingsPage
           theme={theme}
           setTheme={setThemeState}
           nickname={nickname}
           updateNickname={updateNickname}
+          executionMode={executionMode}
+          setExecutionMode={updateExecutionMode}
         />
       )}
     </Shell>
   );
 }
 
-function Shell({ children, route, navigate, profileName, clock }) {
+function Shell({ children, route, navigate, profileName, clock, executionMode, onSignOut }) {
+  const modeProfile = accountProfiles[executionMode];
+  const modeTone = executionMode === "real" ? "text-tertiary" : "text-secondary";
+  const modeDot = executionMode === "real" ? "bg-tertiary" : "bg-secondary";
+
   return (
     <div className="custom-scrollbar font-body-md text-body-md">
       <aside className="flex flex-col h-screen fixed left-0 top-0 py-container-margin border-r border-outline-variant bg-surface-container-low w-64 z-50">
@@ -445,8 +575,8 @@ function Shell({ children, route, navigate, profileName, clock }) {
       <header className="flex justify-between items-center h-12 px-container-margin ml-64 w-[calc(100%-16rem)] bg-surface-container border-b border-outline-variant fixed top-0 z-40">
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-secondary animate-pulse" />
-            <span className="font-label-mono text-label-mono text-secondary">실시간 모드</span>
+            <span className={`w-2 h-2 rounded-full ${modeDot} animate-pulse`} />
+            <span className={`font-label-mono text-label-mono ${modeTone}`}>{modeProfile.label}</span>
           </div>
           <span className="font-label-mono text-label-mono text-on-surface-variant">한국장: 장중</span>
           <span className="font-label-mono text-label-mono text-on-surface-variant">{clock}</span>
@@ -470,6 +600,14 @@ function Shell({ children, route, navigate, profileName, clock }) {
               <Icon className="text-[16px] text-on-primary-container">person</Icon>
             </div>
           </button>
+          <button
+            className="inline-flex items-center gap-1 rounded border border-outline-variant px-2 py-1 font-label-caps text-label-caps text-on-surface-variant hover:bg-surface-container-highest"
+            type="button"
+            onClick={onSignOut}
+          >
+            <Icon className="text-[16px]">logout</Icon>
+            로그아웃
+          </button>
         </div>
       </header>
 
@@ -480,7 +618,9 @@ function Shell({ children, route, navigate, profileName, clock }) {
   );
 }
 
-function DashboardPage({ navigate }) {
+function DashboardPage({ navigate, accountProfile, strategies }) {
+  const activeStrategyCount = strategies.filter((strategy) => strategy.status === "활성").length;
+
   return (
     <>
       <PageHeader
@@ -495,12 +635,7 @@ function DashboardPage({ navigate }) {
       />
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-gutter">
-        {[
-          ["총 평가금액", "124,820,000원", "+1.82%", "secondary"],
-          ["당일 실현손익", "+842,000원", "체결 반영", "secondary"],
-          ["보유 종목", "8개", "KOSPI 중심", "primary"],
-          ["위험 노출", "낮음", "한도 38%", "tertiary"]
-        ].map(([label, value, meta, tone]) => (
+        {accountProfile.dashboardCards.map(([label, value, meta, tone]) => (
           <div className="bg-surface-container rounded-lg border border-outline-variant p-widget-padding" key={label}>
             <p className="font-body-sm text-body-sm text-on-surface-variant">{label}</p>
             <div className="flex items-end justify-between mt-2">
@@ -543,9 +678,7 @@ function DashboardPage({ navigate }) {
             <SectionTitle icon="shield" title="리스크 지표" meta="정상" />
             <div className="p-widget-padding space-y-4">
               {[
-                ["일중 손실 한도", "38%", "bg-secondary"],
-                ["주문 대기 금액", "24%", "bg-primary"],
-                ["전략 집중도", "51%", "bg-tertiary"]
+                ...accountProfile.riskBars
               ].map(([label, value, color]) => (
                 <div key={label}>
                   <div className="flex justify-between font-body-sm text-body-sm text-on-surface-variant mb-2">
@@ -582,9 +715,9 @@ function DashboardPage({ navigate }) {
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-gutter">
         <Section className="section-scroll-sm">
-          <SectionTitle icon="psychology" title="활성 전략" meta="2개 실행 중" />
+          <SectionTitle icon="psychology" title="활성 전략" meta={`${activeStrategyCount}개 실행 중`} />
           <div className="divide-y divide-outline-variant/40">
-            {strategiesSeed.map((strategy) => (
+            {strategies.map((strategy) => (
               <article className="p-widget-padding flex items-center justify-between gap-3" key={strategy.id}>
                 <div>
                   <h4 className="font-title-sm text-title-sm text-on-surface">{strategy.name}</h4>
@@ -616,7 +749,7 @@ function DashboardPage({ navigate }) {
   );
 }
 
-function MarketPage() {
+function MarketPage({ accountProfile }) {
   const [query, setQuery] = useState("");
   const [selectedCode, setSelectedCode] = useState(stocks[0].code);
   const [tab, setTab] = useState("all");
@@ -862,6 +995,7 @@ function MarketPage() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-gutter items-stretch xl:col-span-6">
               <OrderPanel
                 selected={selected}
+                accountProfile={accountProfile}
                 orderPrice={orderPrice}
                 setOrderPrice={setOrderPrice}
                 editingOrder={editingOrder}
@@ -1113,14 +1247,15 @@ function OrderStatusPanel({ orders, selectedOrderId, onSelectOrder }) {
   );
 }
 
-function OrderPanel({ selected, orderPrice, setOrderPrice, editingOrder, onSubmitOrder, onAmendOrder, onCancelOrder, onClearEditing }) {
+function OrderPanel({ selected, accountProfile, orderPrice, setOrderPrice, editingOrder, onSubmitOrder, onAmendOrder, onCancelOrder, onClearEditing }) {
   const [orderSide, setOrderSide] = useState("buy");
   const [orderType, setOrderType] = useState("지정가");
   const [quantity, setQuantity] = useState("10");
   const isEditing = Boolean(editingOrder);
   const currentPrice = Number(String(orderPrice || selected.current).replace(/,/g, "")) || 0;
-  const maxBuyQuantity = currentPrice ? Math.floor(ORDERABLE_CASH / currentPrice) : 0;
-  const holdingQuantity = holdingQuantities[selected.code] || 0;
+  const orderableCash = accountProfile.orderableCash;
+  const holdingQuantity = accountProfile.holdings[selected.code] || 0;
+  const maxBuyQuantity = currentPrice ? Math.floor(orderableCash / currentPrice) : 0;
   const holdingValue = holdingQuantity * currentPrice;
   const limitQuantity = orderSide === "buy" ? maxBuyQuantity : holdingQuantity;
   const isBuy = orderSide === "buy";
@@ -1228,7 +1363,7 @@ function OrderPanel({ selected, orderPrice, setOrderPrice, editingOrder, onSubmi
             <div className="bg-surface-container-low rounded border border-outline-variant p-2">
               <span className="block font-label-caps text-label-caps text-on-surface-variant">{isBuy ? "주문 가능 금액" : "보유 평가액"}</span>
               <span className="block font-label-mono text-label-mono text-on-surface mt-1">
-                {(isBuy ? ORDERABLE_CASH : holdingValue).toLocaleString()}원
+                {(isBuy ? orderableCash : holdingValue).toLocaleString()}원
               </span>
             </div>
             <div className="bg-surface-container-low rounded border border-outline-variant p-2">
@@ -1345,53 +1480,128 @@ function StockInfo({ selected, embedded = false }) {
   );
 }
 
-function StrategyPage({ navigate, favoriteGroups }) {
-  const [strategies, setStrategies] = useState(strategiesSeed);
-  const [selectedId, setSelectedId] = useState(strategiesSeed[0].id);
+function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, setStrategies, sourceStrategies, sourceMode }) {
+  const [selectedId, setSelectedId] = useState(strategies[0]?.id || null);
   const [scope, setScope] = useState("개별 종목");
   const [conditionSide, setConditionSide] = useState("buy");
-  const [backtestStrategy, setBacktestStrategy] = useState(strategiesSeed[0].id);
+  const [backtestStrategy, setBacktestStrategy] = useState(strategies[0]?.id || "");
+  const [importMessage, setImportMessage] = useState("");
+  const [showImportPicker, setShowImportPicker] = useState(false);
+  const [selectedImportId, setSelectedImportId] = useState("");
+  const modeLabel = accountProfiles[executionMode].shortLabel;
+  const sourceModeLabel = accountProfiles[sourceMode].shortLabel;
+  const importableStrategies = useMemo(() => {
+    const currentNames = new Set(strategies.map((strategy) => strategy.name));
+    return sourceStrategies.filter((strategy) => !currentNames.has(strategy.name));
+  }, [strategies, sourceStrategies]);
+  const selectedImportStrategy = importableStrategies.find((strategy) => String(strategy.id) === String(selectedImportId)) || importableStrategies[0];
   const selected = strategies.find((strategy) => strategy.id === selectedId) || strategies[0];
+
+  useEffect(() => {
+    if (!strategies.length) {
+      setSelectedId(null);
+      setBacktestStrategy("");
+      return;
+    }
+    if (!strategies.some((strategy) => strategy.id === selectedId)) {
+      setSelectedId(strategies[0].id);
+    }
+    if (!strategies.some((strategy) => strategy.id === backtestStrategy)) {
+      setBacktestStrategy(strategies[0].id);
+    }
+  }, [strategies, selectedId, backtestStrategy]);
+
+  useEffect(() => {
+    if (!importableStrategies.length) {
+      setSelectedImportId("");
+      return;
+    }
+    if (!importableStrategies.some((strategy) => String(strategy.id) === String(selectedImportId))) {
+      setSelectedImportId(String(importableStrategies[0].id));
+    }
+  }, [importableStrategies, selectedImportId]);
 
   function updateStatus(status) {
     setStrategies((current) => current.map((strategy) => strategy.id === selectedId ? { ...strategy, status } : strategy));
   }
 
   function deleteStrategy() {
-    setStrategies((current) => current.filter((strategy) => strategy.id !== selectedId));
-    setSelectedId((current) => {
-      const next = strategies.find((strategy) => strategy.id !== current);
-      return next?.id || current;
-    });
+    const nextStrategies = strategies.filter((strategy) => strategy.id !== selectedId);
+    setStrategies(nextStrategies);
+    setSelectedId(nextStrategies[0]?.id || null);
+  }
+
+  function addStrategy() {
+    const next = { ...strategiesSeed[0], id: Date.now(), name: "새 전략", status: "중지", returnRate: "0.0%", winRate: "0%", mode: executionMode };
+    setStrategies((current) => [next, ...current]);
+    setSelectedId(next.id);
+    setBacktestStrategy(next.id);
+  }
+
+  function importSelectedStrategy() {
+    if (!selectedImportStrategy) {
+      setImportMessage(`${sourceModeLabel} 모드에서 가져올 새 전략이 없습니다.`);
+      setShowImportPicker(false);
+      return;
+    }
+    const imported = {
+      ...selectedImportStrategy,
+      id: Date.now(),
+      status: "중지",
+      returnRate: "0.0%",
+      winRate: "-",
+      originMode: sourceMode,
+      description: `${selectedImportStrategy.description} ${sourceModeLabel} 모드에서 가져온 뒤 비활성화했습니다.`
+    };
+    setStrategies((current) => [imported, ...current]);
+    setSelectedId(imported.id);
+    setBacktestStrategy(imported.id);
+    setImportMessage(`${sourceModeLabel} 모드의 ${imported.name} 전략을 중지 상태로 가져왔습니다.`);
+    setShowImportPicker(false);
   }
 
   return (
     <>
       <PageHeader
         title="전략 관리"
-        description="전략 범위와 지표 조건을 설정하고, 모의투자 기반 백테스트로 실행 전 성과를 확인합니다."
+        description={`${modeLabel} 모드에 적용되는 전략을 관리하고, 필요하면 다른 모드의 전략을 중지 상태로 가져옵니다.`}
         action={
-          <button
-            className="px-4 py-2 rounded bg-primary-container text-on-primary-container font-label-caps text-label-caps hover:brightness-110 transition-all flex items-center gap-2"
-            type="button"
-            onClick={() => {
-              const next = { ...strategiesSeed[0], id: Date.now(), name: "새 전략", status: "중지", returnRate: "0.0%", winRate: "0%" };
-              setStrategies((current) => [next, ...current]);
-              setSelectedId(next.id);
-            }}
-          >
-            <Icon className="text-[16px]">add</Icon>
-            새 전략
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              className="px-4 py-2 rounded border border-outline-variant text-on-surface-variant font-label-caps text-label-caps hover:bg-surface-container-highest transition-colors flex items-center gap-2"
+              type="button"
+              onClick={() => {
+                setImportMessage("");
+                setShowImportPicker(true);
+              }}
+            >
+              <Icon className="text-[16px]">download</Icon>
+              {sourceModeLabel} 전략 가져오기
+            </button>
+            <button
+              className="px-4 py-2 rounded bg-primary-container text-on-primary-container font-label-caps text-label-caps hover:brightness-110 transition-all flex items-center gap-2"
+              type="button"
+              onClick={addStrategy}
+            >
+              <Icon className="text-[16px]">add</Icon>
+              새 전략
+            </button>
+          </div>
         }
       />
+
+      {importMessage ? (
+        <div className="rounded-lg border border-primary/20 bg-primary/10 p-widget-padding font-body-md text-body-md text-primary">
+          {importMessage}
+        </div>
+      ) : null}
 
       <section className="grid grid-cols-1 xl:grid-cols-12 gap-gutter items-stretch">
         <Section className="xl:col-span-5 flex flex-col h-full">
           <div className="p-widget-padding border-b border-outline-variant">
             <div className="flex items-center justify-between mb-3">
               <h3 className="font-headline-md text-headline-md text-on-surface">전략 목록</h3>
-              <span className="font-label-mono text-label-mono text-secondary">{strategies.length}개</span>
+              <span className="font-label-mono text-label-mono text-secondary">{strategies.length}개 · {modeLabel}</span>
             </div>
             <div className="grid grid-cols-2 gap-gutter">
               <div className="relative">
@@ -1417,9 +1627,14 @@ function StrategyPage({ navigate, favoriteGroups }) {
                   <strong className="font-title-sm text-title-sm text-on-surface">{strategy.name}</strong>
                   <Badge tone={strategy.status === "활성" ? "secondary" : "neutral"}>{strategy.status}</Badge>
                 </div>
-                <p className="font-body-sm text-body-sm text-on-surface-variant mt-1">{strategy.scope} · {strategy.target}</p>
+                <p className="font-body-sm text-body-sm text-on-surface-variant mt-1">
+                  {strategy.scope} · {strategy.target}{strategy.originMode ? ` · ${accountProfiles[strategy.originMode].shortLabel}에서 가져옴` : ""}
+                </p>
               </button>
             ))}
+            {!strategies.length ? (
+              <div className="p-widget-padding text-center font-body-md text-body-md text-on-surface-variant">등록된 전략이 없습니다.</div>
+            ) : null}
           </div>
         </Section>
 
@@ -1592,6 +1807,71 @@ function StrategyPage({ navigate, favoriteGroups }) {
           </Section>
         </div>
       </section>
+
+      {showImportPicker ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-[560px] overflow-hidden rounded-lg border border-outline-variant bg-surface-container">
+            <div className="p-widget-padding border-b border-outline-variant flex items-center gap-2">
+              <Icon className="text-primary">download</Icon>
+              <h3 className="font-headline-md text-headline-md text-on-surface">전략 가져오기</h3>
+            </div>
+            <div className="p-widget-padding space-y-4">
+              <p className="font-body-md text-body-md text-on-surface-variant">
+                {sourceModeLabel} 모드에서 가져올 전략을 이름으로 선택합니다. 가져온 전략은 {modeLabel} 모드에 중지 상태로 추가됩니다.
+              </p>
+              {importableStrategies.length ? (
+                <>
+                  <label className="block">
+                    <span className="font-label-caps text-label-caps text-on-surface-variant">전략 이름</span>
+                    <select
+                      className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-body-md text-body-md text-on-surface"
+                      value={selectedImportId}
+                      onChange={(event) => setSelectedImportId(event.target.value)}
+                    >
+                      {importableStrategies.map((strategy) => (
+                        <option key={strategy.id} value={strategy.id}>{strategy.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="grid grid-cols-1 gap-gutter sm:grid-cols-3">
+                    {[
+                      ["적용 범위", selectedImportStrategy?.scope],
+                      ["대상", selectedImportStrategy?.target],
+                      ["현재 상태", selectedImportStrategy?.status]
+                    ].map(([label, value]) => (
+                      <div className="rounded border border-outline-variant bg-surface-container-low p-3" key={label}>
+                        <span className="block font-label-caps text-label-caps text-on-surface-variant">{label}</span>
+                        <span className="mt-1 block font-title-sm text-title-sm text-on-surface">{value}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <div className="rounded border border-outline-variant bg-surface-container-low p-4 font-body-md text-body-md text-on-surface-variant">
+                  {sourceModeLabel} 모드에서 가져올 새 전략이 없습니다.
+                </div>
+              )}
+              <div className="flex flex-col-reverse gap-gutter sm:flex-row sm:justify-end">
+                <button
+                  className="px-4 py-2 rounded border border-outline-variant text-on-surface-variant font-label-caps text-label-caps hover:bg-surface-container-highest"
+                  type="button"
+                  onClick={() => setShowImportPicker(false)}
+                >
+                  취소
+                </button>
+                <button
+                  className="px-4 py-2 rounded bg-primary-container text-on-primary-container font-label-caps text-label-caps hover:brightness-110 disabled:opacity-50 disabled:hover:brightness-100"
+                  disabled={!importableStrategies.length}
+                  type="button"
+                  onClick={importSelectedStrategy}
+                >
+                  선택한 전략 가져오기
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }
@@ -1721,12 +2001,12 @@ function FilterControl({ label, type = "select", defaultValue, options }) {
   );
 }
 
-function SettingsPage({ theme, setTheme, nickname, updateNickname }) {
+function SettingsPage({ theme, setTheme, nickname, updateNickname, executionMode, setExecutionMode }) {
   const [nicknameDraft, setNicknameDraft] = useState(nickname || "AeroTrade 사용자");
   const [passwordMessage, setPasswordMessage] = useState("보안을 위해 현재 비밀번호를 확인한 뒤 새 비밀번호로 변경합니다.");
   const [orderMode, setOrderMode] = useState("승인 후 주문");
   const [emergencyEnabled, setEmergencyEnabled] = useState(true);
-  const [kiwoomEnv, setKiwoomEnv] = useState("real");
+  const [pendingExecutionMode, setPendingExecutionMode] = useState(null);
   const [kiwoomCredentials, setKiwoomCredentials] = useState({
     real: { appKey: "", appSecret: "" },
     mock: { appKey: "", appSecret: "" }
@@ -1735,21 +2015,22 @@ function SettingsPage({ theme, setTheme, nickname, updateNickname }) {
   const [kiwoomMessage, setKiwoomMessage] = useState("실전과 모의 환경의 API 키를 각각 입력할 수 있습니다.");
   const [showRealConnectWarning, setShowRealConnectWarning] = useState(false);
 
-  const activeKiwoomCredentials = kiwoomCredentials[kiwoomEnv];
-  const activeKiwoomLabel = kiwoomEnv === "real" ? "실전" : "모의";
+  const activeKiwoomCredentials = kiwoomCredentials[executionMode];
+  const activeKiwoomLabel = accountProfiles[executionMode].shortLabel;
+  const pendingExecutionLabel = pendingExecutionMode ? accountProfiles[pendingExecutionMode].shortLabel : "";
 
   function updateKiwoomCredential(field, value) {
     setKiwoomCredentials((current) => ({
       ...current,
-      [kiwoomEnv]: {
-        ...current[kiwoomEnv],
+      [executionMode]: {
+        ...current[executionMode],
         [field]: value
       }
     }));
   }
 
   function connectKiwoom() {
-    if (kiwoomEnv === "real") {
+    if (executionMode === "real") {
       setShowRealConnectWarning(true);
       return;
     }
@@ -1761,6 +2042,18 @@ function SettingsPage({ theme, setTheme, nickname, updateNickname }) {
     setShowRealConnectWarning(false);
     setKiwoomStatus((current) => ({ ...current, real: "연결됨" }));
     setKiwoomMessage("실전 환경 연결이 준비되었습니다. 실제 주문 가능 환경이므로 주문 실행 전 설정을 다시 확인하세요.");
+  }
+
+  function requestExecutionMode(nextMode) {
+    if (nextMode === executionMode) return;
+    setPendingExecutionMode(nextMode);
+  }
+
+  function confirmExecutionModeChange() {
+    if (!pendingExecutionMode) return;
+    setExecutionMode(pendingExecutionMode);
+    setKiwoomMessage(`${accountProfiles[pendingExecutionMode].shortLabel} 환경으로 전환했습니다. 해당 환경의 잔고, 보유 종목, 전략 목록이 적용됩니다.`);
+    setPendingExecutionMode(null);
   }
 
   useEffect(() => {
@@ -1890,9 +2183,9 @@ function SettingsPage({ theme, setTheme, nickname, updateNickname }) {
                 <Icon className="text-primary">api</Icon>
                 <h3 className="font-headline-md text-headline-md text-on-surface">키움증권 API 연결</h3>
               </div>
-              <div className={`flex items-center gap-2 px-2 py-1 rounded ${kiwoomStatus[kiwoomEnv] === "연결됨" ? "bg-secondary/10 text-secondary" : "bg-surface-container-high text-on-surface-variant"}`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${kiwoomStatus[kiwoomEnv] === "연결됨" ? "bg-secondary" : "bg-outline"}`} />
-                <span className="font-label-caps text-label-caps">{activeKiwoomLabel} {kiwoomStatus[kiwoomEnv]}</span>
+              <div className={`flex items-center gap-2 px-2 py-1 rounded ${kiwoomStatus[executionMode] === "연결됨" ? "bg-secondary/10 text-secondary" : "bg-surface-container-high text-on-surface-variant"}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${kiwoomStatus[executionMode] === "연결됨" ? "bg-secondary" : "bg-outline"}`} />
+                <span className="font-label-caps text-label-caps">{activeKiwoomLabel} {kiwoomStatus[executionMode]}</span>
               </div>
             </div>
             <div className="p-widget-padding space-y-3">
@@ -1911,13 +2204,13 @@ function SettingsPage({ theme, setTheme, nickname, updateNickname }) {
                       ["real", "실전"],
                       ["mock", "모의"]
                     ].map(([env, label]) => {
-                      const active = kiwoomEnv === env;
+                      const active = executionMode === env;
                       return (
                         <button
                           className={`flex-1 py-1.5 rounded font-label-mono text-label-mono transition-colors ${active ? "bg-surface-container-highest text-primary" : "text-on-surface-variant hover:text-on-surface"}`}
                           key={env}
                           type="button"
-                          onClick={() => setKiwoomEnv(env)}
+                          onClick={() => requestExecutionMode(env)}
                         >
                           {label}
                         </button>
@@ -1948,7 +2241,7 @@ function SettingsPage({ theme, setTheme, nickname, updateNickname }) {
                   />
                 </label>
               </div>
-              <p className={`font-body-sm text-body-sm ${kiwoomEnv === "real" ? "text-tertiary" : "text-on-surface-variant"}`}>
+              <p className={`font-body-sm text-body-sm ${executionMode === "real" ? "text-tertiary" : "text-on-surface-variant"}`}>
                 {kiwoomMessage}
               </p>
               <div className="flex flex-col sm:flex-row gap-gutter">
@@ -1960,8 +2253,8 @@ function SettingsPage({ theme, setTheme, nickname, updateNickname }) {
                   className="px-4 py-2 rounded border border-outline-variant text-on-surface-variant font-label-caps text-label-caps hover:bg-surface-container-highest"
                   type="button"
                   onClick={() => {
-                    setKiwoomCredentials((current) => ({ ...current, [kiwoomEnv]: { appKey: "", appSecret: "" } }));
-                    setKiwoomStatus((current) => ({ ...current, [kiwoomEnv]: "미연결" }));
+                    setKiwoomCredentials((current) => ({ ...current, [executionMode]: { appKey: "", appSecret: "" } }));
+                    setKiwoomStatus((current) => ({ ...current, [executionMode]: "미연결" }));
                     setKiwoomMessage(`${activeKiwoomLabel} API 키를 다시 입력합니다.`);
                   }}
                 >
@@ -1991,6 +2284,53 @@ function SettingsPage({ theme, setTheme, nickname, updateNickname }) {
           </Section>
         </div>
       </div>
+      {pendingExecutionMode ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-[560px] overflow-hidden rounded-lg border border-primary/30 bg-surface-container">
+            <div className="p-widget-padding border-b border-outline-variant flex items-center gap-2">
+              <Icon className="text-primary">sync_alt</Icon>
+              <h3 className="font-headline-md text-headline-md text-on-surface">실행 환경 전환 확인</h3>
+            </div>
+            <div className="p-widget-padding space-y-4">
+              <p className="font-body-md text-body-md text-on-surface-variant">
+                {pendingExecutionLabel} 투자 모드로 전환하면 계좌 잔고, 주문 가능 금액, 보유 종목, 전략 목록이 해당 모드 기준으로 바뀝니다.
+              </p>
+              <div className="grid grid-cols-1 gap-gutter sm:grid-cols-2">
+                <div className="rounded border border-outline-variant bg-surface-container-low p-3">
+                  <span className="block font-label-caps text-label-caps text-on-surface-variant">유지됨</span>
+                  <span className="mt-1 block font-title-sm text-title-sm text-on-surface">관심 종목과 관심 그룹</span>
+                </div>
+                <div className="rounded border border-outline-variant bg-surface-container-low p-3">
+                  <span className="block font-label-caps text-label-caps text-on-surface-variant">모드별 분리</span>
+                  <span className="mt-1 block font-title-sm text-title-sm text-on-surface">잔고, 보유 종목, 전략</span>
+                </div>
+              </div>
+              <div className="rounded border border-primary/20 bg-primary/10 p-3">
+                <span className="block font-label-caps text-label-caps text-primary">전략 가져오기</span>
+                <span className="mt-1 block font-body-sm text-body-sm text-on-surface-variant">
+                  다른 모드의 전략은 전략 관리 화면의 가져오기 버튼으로 불러올 수 있으며, 가져온 전략은 중지 상태로 추가됩니다.
+                </span>
+              </div>
+              <div className="flex flex-col-reverse gap-gutter sm:flex-row sm:justify-end">
+                <button
+                  className="px-4 py-2 rounded border border-outline-variant text-on-surface-variant font-label-caps text-label-caps hover:bg-surface-container-highest"
+                  type="button"
+                  onClick={() => setPendingExecutionMode(null)}
+                >
+                  취소
+                </button>
+                <button
+                  className="px-4 py-2 rounded bg-primary-container text-on-primary-container font-label-caps text-label-caps hover:brightness-110"
+                  type="button"
+                  onClick={confirmExecutionModeChange}
+                >
+                  {pendingExecutionLabel} 모드로 전환
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {showRealConnectWarning ? (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4">
           <div className="w-full max-w-[520px] overflow-hidden rounded-lg border border-error/30 bg-surface-container">
@@ -2039,7 +2379,7 @@ function PasswordField({ label, placeholder }) {
   );
 }
 
-function LoginPage({ navigate, updateNickname }) {
+function LoginPage({ onSignIn, updateNickname }) {
   const [mode, setMode] = useState("login");
   const [nickname, setNickname] = useState("");
 
@@ -2074,7 +2414,7 @@ function LoginPage({ navigate, updateNickname }) {
             type="button"
             onClick={() => {
               if (mode === "signup" && nickname.trim()) updateNickname(nickname);
-              navigate("dashboard");
+              onSignIn();
             }}
           >
             {mode === "signup" ? "회원가입" : "로그인"}
