@@ -1,0 +1,1747 @@
+import React, { useEffect, useMemo, useState } from "react";
+
+const THEME_KEY = "aerotrade.theme";
+const NICKNAME_KEY = "aerotrade.nickname";
+
+const navItems = [
+  { page: "dashboard", label: "대시보드", icon: "dashboard" },
+  { page: "market", label: "시장", icon: "monitoring" },
+  { page: "strategy", label: "전략 관리", icon: "psychology" },
+  { page: "record", label: "기록 및 알림", icon: "history" },
+  { page: "setting", label: "설정", icon: "settings" }
+];
+
+const stocks = [
+  {
+    code: "005930",
+    name: "삼성전자",
+    market: "KOSPI",
+    price: "84,200",
+    change: "+1.08%",
+    value: "12,480억",
+    volume: "18,421,903",
+    sector: "반도체",
+    high: "85,100",
+    low: "83,300",
+    current: "84,200",
+    marketCap: "502.6조",
+    per: "17.8",
+    pbr: "1.42",
+    roe: "8.4%",
+    rsi: "58.6",
+    macd: "상승 전환",
+    ma20: "82,900",
+    foreign: "+1,248억",
+    institution: "+642억",
+    summary: "외국인과 기관 수급이 동시에 개선되며 20일 이동평균 위에서 거래되고 있습니다. 단기 과열은 제한적이지만, 85,000원 부근 저항 돌파 여부가 중요합니다."
+  },
+  {
+    code: "000660",
+    name: "SK하이닉스",
+    market: "KOSPI",
+    price: "216,500",
+    change: "+2.12%",
+    value: "9,730억",
+    volume: "5,284,112",
+    sector: "반도체",
+    high: "219,000",
+    low: "211,000",
+    current: "216,500",
+    marketCap: "157.6조",
+    per: "22.1",
+    pbr: "1.88",
+    roe: "9.7%",
+    rsi: "62.1",
+    macd: "매수 우위",
+    ma20: "208,400",
+    foreign: "+982억",
+    institution: "+516억",
+    summary: "HBM 기대감과 거래대금 증가가 함께 나타나고 있습니다. 상승 탄력은 좋지만 직전 고점 부근 분할 진입이 안정적입니다."
+  },
+  {
+    code: "035420",
+    name: "NAVER",
+    market: "KOSPI",
+    price: "188,700",
+    change: "-0.47%",
+    value: "1,240억",
+    volume: "921,430",
+    sector: "인터넷",
+    high: "191,800",
+    low: "186,900",
+    current: "188,700",
+    marketCap: "30.1조",
+    per: "19.4",
+    pbr: "1.10",
+    roe: "6.2%",
+    rsi: "44.3",
+    macd: "중립",
+    ma20: "190,200",
+    foreign: "-72억",
+    institution: "+41억",
+    summary: "거래량이 줄어든 박스권 흐름입니다. 190,000원 회복 전까지는 관망 또는 짧은 손절 기준이 필요합니다."
+  },
+  {
+    code: "035720",
+    name: "카카오",
+    market: "KOSPI",
+    price: "45,850",
+    change: "-1.18%",
+    value: "864억",
+    volume: "2,514,309",
+    sector: "플랫폼",
+    high: "46,700",
+    low: "45,350",
+    current: "45,850",
+    marketCap: "20.4조",
+    per: "31.2",
+    pbr: "1.54",
+    roe: "4.5%",
+    rsi: "39.8",
+    macd: "매도 우위",
+    ma20: "47,100",
+    foreign: "-118억",
+    institution: "-24억",
+    summary: "단기 추세는 약하지만 낙폭 과대 구간에 가까워지고 있습니다. 추세 전환 확인 전에는 비중 확대를 서두르기 어렵습니다."
+  },
+  {
+    code: "373220",
+    name: "LG에너지솔루션",
+    market: "KOSPI",
+    price: "356,000",
+    change: "+0.71%",
+    value: "2,044억",
+    volume: "612,818",
+    sector: "2차전지",
+    high: "361,000",
+    low: "351,500",
+    current: "356,000",
+    marketCap: "83.3조",
+    per: "64.8",
+    pbr: "4.32",
+    roe: "5.8%",
+    rsi: "51.9",
+    macd: "중립",
+    ma20: "352,700",
+    foreign: "+83억",
+    institution: "-39억",
+    summary: "20일선 위에서 반등을 시도하고 있습니다. 업종 수급이 약한 편이라 거래대금 동반 여부를 확인하는 편이 좋습니다."
+  }
+];
+
+const initialGroups = {
+  "핵심 관심": ["005930", "000660"],
+  "단기 관찰": ["035420", "373220"]
+};
+
+const ORDERABLE_CASH = 5000000;
+
+const holdingQuantities = {
+  "005930": 42,
+  "000660": 12,
+  "035420": 8,
+  "035720": 0,
+  "373220": 5
+};
+
+const strategiesSeed = [
+  {
+    id: 1,
+    name: "시가 돌파 전략",
+    status: "활성",
+    scope: "개별 종목",
+    target: "삼성전자 외 2개",
+    returnRate: "+8.7%",
+    winRate: "62%",
+    description: "장 초반 거래량과 돌파 조건을 함께 확인합니다."
+  },
+  {
+    id: 2,
+    name: "종가 회귀 전략",
+    status: "중지",
+    scope: "종목 그룹",
+    target: "단기 관찰",
+    returnRate: "+3.1%",
+    winRate: "55%",
+    description: "과매도 후 종가 회복 패턴을 기준으로 진입합니다."
+  },
+  {
+    id: 3,
+    name: "수급 추적 전략",
+    status: "활성",
+    scope: "전체 종목",
+    target: "전체 종목",
+    returnRate: "+5.4%",
+    winRate: "59%",
+    description: "기관과 외국인 순매수 흐름을 추적합니다."
+  }
+];
+
+const recordRows = [
+  ["2026-06-21 14:58:12", "주문", "시가 돌파 전략", "매수 주문 3건 체결, 평균 체결가 반영 완료", "완료"],
+  ["2026-06-21 13:42:07", "전략", "수급 추적 전략", "기관 순매수 조건 충족, 다음 체결 신호 대기", "대기"],
+  ["2026-06-20 15:21:44", "리스크", "종가 회귀 전략", "일중 손실 한도 도달, 신규 주문 차단", "중지"],
+  ["2026-06-20 08:50:00", "시스템", "시스템", "한국거래소 장 시작 전 계좌 및 주문 권한 확인 완료", "완료"],
+  ["2026-06-19 15:05:36", "주문", "시가 돌파 전략", "장 마감 전 보유 수량 일부 청산 완료", "완료"],
+  ["2026-06-18 10:12:18", "시스템", "수급 추적 전략", "데이터 수신 지연 2회 감지, 자동 재연결 완료", "확인 필요"],
+  ["2026-06-17 09:03:25", "전략", "종가 회귀 전략", "장 시작 후 변동성 조건 확인, 전략 활성화", "완료"]
+];
+
+const alerts = [
+  ["warning", "text-error", "종가 회귀 전략 주문 차단", "일중 손실 한도에 도달해 신규 주문이 중지되었습니다.", "2026-06-20 15:21"],
+  ["sync_problem", "text-tertiary", "데이터 수신 지연 감지", "시세 데이터 지연이 감지되었고 자동 재연결을 완료했습니다.", "2026-06-18 10:12"],
+  ["check_circle", "text-secondary", "장 시작 전 점검 완료", "계좌 권한, 주문 권한, 키움증권 연결 상태를 확인했습니다.", "2026-06-20 08:50"],
+  ["campaign", "text-primary", "신규 매수 신호", "삼성전자와 SK하이닉스에서 매수 후보 신호가 발생했습니다.", "2026-06-21 09:12"]
+];
+
+function getInitialTheme() {
+  try {
+    return localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark";
+  } catch {
+    return "dark";
+  }
+}
+
+function getInitialNickname() {
+  try {
+    return localStorage.getItem(NICKNAME_KEY)?.trim() || "";
+  } catch {
+    return "";
+  }
+}
+
+function readRoute() {
+  const raw = window.location.hash.replace("#", "") || "dashboard";
+  const [page, anchor] = raw.split(":");
+  const validPage = ["dashboard", "market", "strategy", "record", "setting", "login"].includes(page) ? page : "dashboard";
+  return { page: validPage, anchor: anchor || "" };
+}
+
+function Icon({ children, className = "", ...props }) {
+  return <span className={`material-symbols-outlined ${className}`} {...props}>{children}</span>;
+}
+
+function Section({ children, className = "" }) {
+  return <section className={`bg-surface-container rounded-lg border border-outline-variant overflow-hidden ${className}`}>{children}</section>;
+}
+
+function SectionTitle({ icon, title, meta, tone = "text-primary" }) {
+  return (
+    <div className="p-widget-padding border-b border-outline-variant flex items-center justify-between gap-3">
+      <div className="flex items-center gap-2">
+        {icon ? <Icon className={tone}>{icon}</Icon> : null}
+        <h3 className="font-headline-md text-headline-md text-on-surface">{title}</h3>
+      </div>
+      {meta ? <span className="font-label-mono text-label-mono text-secondary">{meta}</span> : null}
+    </div>
+  );
+}
+
+function PageHeader({ title, description, action }) {
+  return (
+    <section className="bg-surface-container rounded-lg border border-outline-variant p-widget-padding">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <h2 className="font-headline-lg text-headline-lg text-on-surface">{title}</h2>
+          <p className="font-body-md text-body-md text-on-surface-variant mt-1">{description}</p>
+        </div>
+        {action}
+      </div>
+    </section>
+  );
+}
+
+function Badge({ children, tone = "primary" }) {
+  const colors = {
+    primary: "bg-primary/10 text-primary",
+    secondary: "bg-secondary/10 text-secondary",
+    tertiary: "bg-tertiary/10 text-tertiary",
+    error: "bg-error/10 text-error",
+    neutral: "bg-surface-container-highest text-on-surface-variant"
+  };
+  return <span className={`px-2 py-1 rounded font-label-caps text-label-caps ${colors[tone]}`}>{children}</span>;
+}
+
+function App() {
+  const [route, setRoute] = useState(readRoute);
+  const [theme, setThemeState] = useState(getInitialTheme);
+  const [nickname, setNicknameState] = useState(getInitialNickname);
+  const [clock, setClock] = useState("");
+
+  useEffect(() => {
+    const onHashChange = () => setRoute(readRoute());
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.dataset.theme = theme;
+    root.classList.toggle("dark", theme === "dark");
+    root.classList.toggle("light", theme === "light");
+    root.style.colorScheme = theme;
+    localStorage.setItem(THEME_KEY, theme);
+  }, [theme]);
+
+  useEffect(() => {
+    const updateClock = () => {
+      const formatter = new Intl.DateTimeFormat("ko-KR", {
+        timeZone: "Asia/Seoul",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false
+      });
+      setClock(`${formatter.format(new Date())} KST`);
+    };
+    updateClock();
+    const timer = window.setInterval(updateClock, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!route.anchor) return;
+    window.setTimeout(() => {
+      document.getElementById(route.anchor)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 0);
+  }, [route]);
+
+  function navigate(page, anchor = "") {
+    window.location.hash = anchor ? `${page}:${anchor}` : page;
+    setRoute({ page, anchor });
+  }
+
+  function updateNickname(nextName) {
+    const cleanName = nextName.trim();
+    setNicknameState(cleanName);
+    if (cleanName) localStorage.setItem(NICKNAME_KEY, cleanName);
+  }
+
+  const profileName = nickname || "프로필";
+
+  if (route.page === "login") {
+    return <LoginPage navigate={navigate} updateNickname={updateNickname} />;
+  }
+
+  return (
+    <Shell route={route} navigate={navigate} profileName={profileName} clock={clock}>
+      {route.page === "dashboard" && <DashboardPage navigate={navigate} />}
+      {route.page === "market" && <MarketPage />}
+      {route.page === "strategy" && <StrategyPage navigate={navigate} favoriteGroups={initialGroups} />}
+      {route.page === "record" && <RecordPage />}
+      {route.page === "setting" && (
+        <SettingsPage
+          theme={theme}
+          setTheme={setThemeState}
+          nickname={nickname}
+          updateNickname={updateNickname}
+        />
+      )}
+    </Shell>
+  );
+}
+
+function Shell({ children, route, navigate, profileName, clock }) {
+  return (
+    <div className="custom-scrollbar font-body-md text-body-md">
+      <aside className="flex flex-col h-screen fixed left-0 top-0 py-container-margin border-r border-outline-variant bg-surface-container-low w-64 z-50">
+        <div className="px-6 mb-8">
+          <h1 className="font-display text-display text-primary uppercase">AeroTrade</h1>
+          <p className="font-label-caps text-label-caps text-on-surface-variant opacity-70">Institutional Grade</p>
+        </div>
+        <nav className="flex-1 px-4 space-y-1">
+          {navItems.map((item) => {
+            const active = route.page === item.page;
+            return (
+              <button
+                className={`w-full flex items-center px-4 py-3 rounded-lg transition-colors text-left ${
+                  active
+                    ? "text-secondary font-bold bg-surface-container-high"
+                    : "text-on-surface-variant font-body-md hover:bg-surface-container-highest"
+                }`}
+                key={item.page}
+                type="button"
+                onClick={() => navigate(item.page)}
+              >
+                <Icon className="mr-3">{item.icon}</Icon>
+                <span className="font-body-md text-body-md">{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+        <div className="px-4 mt-auto">
+          <button className="w-full py-3 bg-error-container text-on-error-container font-title-sm text-title-sm font-bold rounded-lg hover:brightness-110 transition-all flex items-center justify-center gap-2" type="button">
+            <Icon className="text-[20px]">warning</Icon>
+            긴급 중지
+          </button>
+          <div className="grid grid-cols-2 gap-2 mt-6 px-2">
+            {[
+              ["dns", "서버"],
+              ["database", "DB"],
+              ["api", "API"],
+              ["sync_alt", "소켓"]
+            ].map(([icon, label]) => (
+              <div className="flex items-center gap-1" key={label}>
+                <Icon className="text-[14px] text-secondary">{icon}</Icon>
+                <span className="font-label-mono text-label-mono text-on-surface-variant">{label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </aside>
+
+      <header className="flex justify-between items-center h-12 px-container-margin ml-64 w-[calc(100%-16rem)] bg-surface-container border-b border-outline-variant fixed top-0 z-40">
+        <div className="flex items-center gap-6">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-secondary animate-pulse" />
+            <span className="font-label-mono text-label-mono text-secondary">실시간 모드</span>
+          </div>
+          <span className="font-label-mono text-label-mono text-on-surface-variant">한국장: 장중</span>
+          <span className="font-label-mono text-label-mono text-on-surface-variant">{clock}</span>
+        </div>
+        <div className="flex items-center gap-4">
+          <button
+            className="inline-flex items-center justify-center p-1 text-on-surface-variant hover:text-primary transition-opacity"
+            type="button"
+            aria-label="알림 보기"
+            onClick={() => navigate("record", "alerts")}
+          >
+            <Icon>notifications</Icon>
+          </button>
+          <button
+            className="flex items-center gap-2 px-2 py-1 rounded hover:bg-surface-container-highest cursor-pointer transition-colors"
+            type="button"
+            onClick={() => navigate("setting", "profile-security")}
+          >
+            <span className="font-label-mono text-label-mono text-on-surface-variant">{profileName}</span>
+            <div className="w-6 h-6 rounded-full bg-primary-container flex items-center justify-center">
+              <Icon className="text-[16px] text-on-primary-container">person</Icon>
+            </div>
+          </button>
+        </div>
+      </header>
+
+      <main className="ml-64 mt-12 min-h-[calc(100vh-3rem)] p-container-margin bg-surface-container-lowest">
+        <div className="max-w-[1600px] mx-auto space-y-gutter">{children}</div>
+      </main>
+    </div>
+  );
+}
+
+function DashboardPage({ navigate }) {
+  return (
+    <>
+      <PageHeader
+        title="대시보드"
+        description="국내장 기준으로 계좌 상태, 전략 실행 현황, 최근 주문과 시스템 알림을 확인합니다."
+        action={
+          <button className="px-4 py-2 rounded bg-primary-container text-on-primary-container font-label-caps text-label-caps hover:brightness-110 transition-all flex items-center gap-2" type="button" onClick={() => navigate("strategy")}>
+            <Icon className="text-[16px]">add</Icon>
+            전략 추가
+          </button>
+        }
+      />
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-gutter">
+        {[
+          ["총 평가금액", "124,820,000원", "+1.82%", "secondary"],
+          ["당일 실현손익", "+842,000원", "체결 반영", "secondary"],
+          ["보유 종목", "8개", "KOSPI 중심", "primary"],
+          ["위험 노출", "낮음", "한도 38%", "tertiary"]
+        ].map(([label, value, meta, tone]) => (
+          <div className="bg-surface-container rounded-lg border border-outline-variant p-widget-padding" key={label}>
+            <p className="font-body-sm text-body-sm text-on-surface-variant">{label}</p>
+            <div className="flex items-end justify-between mt-2">
+              <strong className={`font-headline-lg text-headline-lg ${tone === "secondary" ? "text-secondary" : tone === "tertiary" ? "text-tertiary" : "text-on-surface"}`}>{value}</strong>
+              <span className="font-label-mono text-label-mono text-on-surface-variant">{meta}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-gutter items-stretch">
+        <Section className="xl:col-span-8 section-scroll-tall">
+          <SectionTitle icon="show_chart" title="누적 손익 추이" meta="2026년" />
+          <div className="p-widget-padding">
+            <div className="h-[280px] flex items-end gap-2 border-b border-outline-variant px-2">
+              {[42, 48, 46, 55, 61, 58, 68, 73, 80, 76, 88, 94].map((height, index) => (
+                <div className="flex-1 flex flex-col items-center justify-end gap-2" key={height + index}>
+                  <div className="w-full rounded-t bg-secondary/60" style={{ height: `${height}%` }} />
+                  <span className="font-label-mono text-label-mono text-on-surface-variant">{index + 1}월</span>
+                </div>
+              ))}
+            </div>
+            <div className="grid grid-cols-3 gap-gutter mt-gutter">
+              {[
+                ["월간 수익률", "+6.4%"],
+                ["최대 낙폭", "-2.1%"],
+                ["평균 보유 시간", "3.8일"]
+              ].map(([label, value]) => (
+                <div className="bg-surface-container-low rounded border border-outline-variant p-3" key={label}>
+                  <p className="font-body-sm text-body-sm text-on-surface-variant">{label}</p>
+                  <p className="font-title-sm text-title-sm text-on-surface mt-1">{value}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </Section>
+
+        <div className="xl:col-span-4 flex flex-col gap-gutter">
+          <Section className="flex-1">
+            <SectionTitle icon="shield" title="리스크 지표" meta="정상" />
+            <div className="p-widget-padding space-y-4">
+              {[
+                ["일중 손실 한도", "38%", "bg-secondary"],
+                ["주문 대기 금액", "24%", "bg-primary"],
+                ["전략 집중도", "51%", "bg-tertiary"]
+              ].map(([label, value, color]) => (
+                <div key={label}>
+                  <div className="flex justify-between font-body-sm text-body-sm text-on-surface-variant mb-2">
+                    <span>{label}</span>
+                    <span>{value}</span>
+                  </div>
+                  <div className="h-2 rounded bg-surface-container-highest overflow-hidden">
+                    <div className={`h-full ${color}`} style={{ width: value }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Section>
+
+          <Section className="flex-[1.35] min-h-[360px] flex flex-col">
+            <SectionTitle icon="notifications" title="시스템 알림" meta="4건" />
+            <div className="divide-y divide-outline-variant/40 section-body-scroll custom-scrollbar flex-1 min-h-0">
+              {alerts.map(([icon, color, title, body, time]) => (
+                <article className="p-widget-padding flex items-start gap-3" key={title}>
+                  <Icon className={`${color} mt-0.5`}>{icon}</Icon>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h4 className="font-title-sm text-title-sm text-on-surface">{title}</h4>
+                      <span className="font-label-mono text-label-mono text-on-surface-variant">{time.slice(11)}</span>
+                    </div>
+                    <p className="font-body-sm text-body-sm text-on-surface-variant mt-1">{body}</p>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </Section>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-gutter">
+        <Section className="section-scroll-sm">
+          <SectionTitle icon="psychology" title="활성 전략" meta="2개 실행 중" />
+          <div className="divide-y divide-outline-variant/40">
+            {strategiesSeed.map((strategy) => (
+              <article className="p-widget-padding flex items-center justify-between gap-3" key={strategy.id}>
+                <div>
+                  <h4 className="font-title-sm text-title-sm text-on-surface">{strategy.name}</h4>
+                  <p className="font-body-sm text-body-sm text-on-surface-variant mt-1">{strategy.description}</p>
+                </div>
+                <Badge tone={strategy.status === "활성" ? "secondary" : "neutral"}>{strategy.status}</Badge>
+              </article>
+            ))}
+          </div>
+        </Section>
+
+        <Section className="section-scroll-sm">
+          <SectionTitle icon="receipt_long" title="최근 주문 현황" meta="국내장" />
+          <div className="divide-y divide-outline-variant/40">
+            {recordRows.slice(0, 5).map(([time, type, target, body, status]) => (
+              <article className="grid grid-cols-12 gap-3 p-widget-padding items-center" key={time}>
+                <span className="col-span-3 font-label-mono text-label-mono text-on-surface-variant">{time.slice(5)}</span>
+                <span className="col-span-2">
+                  <Badge tone={type === "리스크" ? "error" : type === "주문" ? "secondary" : "primary"}>{type}</Badge>
+                </span>
+                <span className="col-span-3 font-title-sm text-title-sm text-on-surface truncate">{target}</span>
+                <span className="col-span-4 font-body-sm text-body-sm text-on-surface-variant truncate">{body} · {status}</span>
+              </article>
+            ))}
+          </div>
+        </Section>
+      </div>
+    </>
+  );
+}
+
+function MarketPage() {
+  const [query, setQuery] = useState("");
+  const [selectedCode, setSelectedCode] = useState(stocks[0].code);
+  const [tab, setTab] = useState("all");
+  const [groups, setGroups] = useState(initialGroups);
+  const [openGroups, setOpenGroups] = useState({ "핵심 관심": true, "단기 관찰": true });
+  const [pendingStock, setPendingStock] = useState(null);
+
+  const selected = stocks.find((stock) => stock.code === selectedCode) || stocks[0];
+  const favoriteCodes = useMemo(() => new Set(Object.values(groups).flat()), [groups]);
+  const filteredStocks = stocks.filter((stock) => `${stock.name} ${stock.code}`.toLowerCase().includes(query.toLowerCase()));
+
+  function addToGroup(groupName) {
+    if (!pendingStock) return;
+    setGroups((current) => ({
+      ...current,
+      [groupName]: Array.from(new Set([...(current[groupName] || []), pendingStock.code]))
+    }));
+    setOpenGroups((current) => ({ ...current, [groupName]: true }));
+    setPendingStock(null);
+  }
+
+  function removeFavorite(code) {
+    setGroups((current) => Object.fromEntries(Object.entries(current).map(([group, codes]) => [group, codes.filter((item) => item !== code)])));
+  }
+
+  return (
+    <>
+      <PageHeader
+        title="시장"
+        description="종목 검색, 관심 그룹 관리, 호가와 주문 화면을 한 곳에서 확인합니다."
+        action={
+          <div className="flex gap-2">
+            <button className="px-4 py-2 rounded bg-primary-container text-on-primary-container font-label-caps text-label-caps hover:brightness-110 flex items-center gap-2" type="button">
+              <Icon className="text-[16px]">refresh</Icon>
+              새로고침
+            </button>
+          </div>
+        }
+      />
+
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-gutter items-stretch">
+        <Section className="xl:col-span-4 flex flex-col min-h-[720px]">
+          <div className="p-widget-padding border-b border-outline-variant">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="font-headline-lg text-headline-lg text-on-surface">국내 종목 검색</h2>
+              <span className="font-label-mono text-label-mono text-secondary">{filteredStocks.length}개</span>
+            </div>
+            <div className="relative">
+              <Icon className="absolute left-3 top-1/2 -translate-y-1/2 text-outline text-[20px]">search</Icon>
+              <input
+                className="w-full bg-surface-container-lowest border border-outline-variant rounded pl-10 pr-3 py-2 font-body-md text-body-md text-on-surface placeholder:text-outline focus:ring-1 focus:ring-primary"
+                placeholder="종목명 또는 코드 검색"
+                type="search"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-gutter mt-gutter">
+              {[
+                ["all", "전체 종목"],
+                ["favorites", "관심 종목"]
+              ].map(([key, label]) => (
+                <button
+                  className={`py-2 rounded border font-label-caps text-label-caps ${
+                    tab === key ? "border-primary bg-primary/10 text-primary" : "border-outline-variant text-on-surface-variant hover:bg-surface-container-highest"
+                  }`}
+                  key={key}
+                  type="button"
+                  onClick={() => setTab(key)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="section-body-scroll custom-scrollbar flex-1">
+            {tab === "all" ? (
+              filteredStocks.map((stock) => (
+                <StockRow
+                  key={stock.code}
+                  stock={stock}
+                  selected={selectedCode === stock.code}
+                  favorite={favoriteCodes.has(stock.code)}
+                  onSelect={() => setSelectedCode(stock.code)}
+                  onFavorite={() => favoriteCodes.has(stock.code) ? removeFavorite(stock.code) : setPendingStock(stock)}
+                />
+              ))
+            ) : (
+              <div className="divide-y divide-outline-variant/40">
+                {Object.entries(groups).map(([groupName, codes]) => (
+                  <div key={groupName}>
+                    <button className="w-full p-widget-padding bg-surface-container-low flex items-center justify-between" type="button" onClick={() => setOpenGroups((current) => ({ ...current, [groupName]: !current[groupName] }))}>
+                      <span className="font-title-sm text-title-sm text-on-surface">{groupName}</span>
+                      <Icon className="text-on-surface-variant">{openGroups[groupName] ? "expand_less" : "expand_more"}</Icon>
+                    </button>
+                    {openGroups[groupName] ? codes.map((code) => {
+                      const stock = stocks.find((item) => item.code === code);
+                      return stock ? (
+                        <StockRow
+                          key={`${groupName}-${code}`}
+                          stock={stock}
+                          selected={selectedCode === stock.code}
+                          favorite
+                          onSelect={() => setSelectedCode(stock.code)}
+                          onFavorite={() => removeFavorite(stock.code)}
+                        />
+                      ) : null;
+                    }) : null}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </Section>
+
+        <div className="xl:col-span-8 space-y-gutter">
+          <Section>
+            <div className="p-widget-padding border-b border-outline-variant flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="font-headline-lg text-headline-lg text-on-surface">{selected.name}</h2>
+                  <span className="font-label-mono text-label-mono text-on-surface-variant">{selected.code}</span>
+                  <Badge tone="primary">{selected.market}</Badge>
+                </div>
+                <p className="font-body-sm text-body-sm text-on-surface-variant mt-1">{selected.sector} · 현재가 {selected.current}원</p>
+              </div>
+              <div className="text-right">
+                <p className="font-display text-display text-on-surface">{selected.price}</p>
+                <p className={`font-title-sm text-title-sm ${selected.change.startsWith("+") ? "text-secondary" : "text-tertiary"}`}>{selected.change}</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-gutter p-widget-padding">
+              <IntradayChart />
+              <OrderBook current={selected.current} />
+            </div>
+          </Section>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-gutter items-stretch">
+            <div className="lg:col-span-8 flex h-full flex-col gap-gutter">
+              <Section>
+                <div className="p-widget-padding">
+                  <h3 className="font-headline-md text-headline-md text-on-surface mb-3">주요 지표</h3>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-gutter">
+                    {[
+                      ["PER", selected.per],
+                      ["PBR", selected.pbr],
+                      ["ROE", selected.roe],
+                      ["RSI", selected.rsi],
+                      ["MACD", selected.macd],
+                      ["20일선", selected.ma20],
+                      ["외국인", selected.foreign],
+                      ["기관", selected.institution]
+                    ].map(([label, value]) => (
+                      <div className="bg-surface-container-low rounded border border-outline-variant p-3" key={label}>
+                        <p className="font-body-sm text-body-sm text-on-surface-variant">{label}</p>
+                        <p className="font-title-sm text-title-sm text-on-surface mt-1">{value}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </Section>
+
+              <Section className="section-scroll-tall min-h-[620px] flex flex-1 flex-col">
+                <SectionTitle icon="analytics" title="종목 분석" meta="자동 요약" />
+                <div className="p-widget-padding flex flex-1 flex-col gap-gutter">
+                  <div className="grid grid-cols-3 gap-gutter">
+                    {[
+                      ["추세", "상승", "secondary"],
+                      ["수급", "개선", "primary"],
+                      ["위험", "보통", "tertiary"]
+                    ].map(([label, value, tone]) => (
+                      <div className="bg-surface-container-low rounded border border-outline-variant p-3" key={label}>
+                        <p className="font-label-caps text-label-caps text-on-surface-variant">{label}</p>
+                        <p className={`font-title-sm text-title-sm mt-1 ${tone === "secondary" ? "text-secondary" : tone === "primary" ? "text-primary" : "text-tertiary"}`}>{value}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="bg-surface-container-low rounded border border-outline-variant p-4 flex min-h-[240px] flex-1 flex-col">
+                    <h4 className="font-title-sm text-title-sm text-on-surface mb-2">분석 요약</h4>
+                    <p className="font-body-md text-body-md text-on-surface-variant">{selected.summary}</p>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-gutter">
+                    {["거래대금이 최근 평균 대비 높습니다.", "전략 적용 전 손절 기준을 확인하세요.", "장중 변동성 확대 시 분할 주문이 적합합니다.", "관심 그룹에 포함하면 전략 범위에서 선택할 수 있습니다."].map((text) => (
+                      <div className="flex items-start gap-2 bg-surface-container-low rounded border border-outline-variant p-3" key={text}>
+                        <Icon className="text-secondary text-[18px] mt-0.5">check_circle</Icon>
+                        <p className="font-body-sm text-body-sm text-on-surface-variant">{text}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </Section>
+            </div>
+
+            <div className="lg:col-span-4 flex h-full flex-col gap-gutter">
+              <OrderPanel selected={selected} />
+              <StockInfo selected={selected} />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {pendingStock ? (
+        <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-surface-container rounded-lg border border-outline-variant overflow-hidden">
+            <SectionTitle icon="star" title="관심 그룹 선택" meta={pendingStock.name} />
+            <div className="p-widget-padding space-y-gutter">
+              {Object.keys(groups).map((groupName) => (
+                <button className="w-full p-3 rounded border border-outline-variant hover:bg-surface-container-highest text-left" key={groupName} type="button" onClick={() => addToGroup(groupName)}>
+                  <span className="block font-title-sm text-title-sm text-on-surface">{groupName}</span>
+                  <span className="block font-body-sm text-body-sm text-on-surface-variant mt-1">현재 {groups[groupName].length}개 종목</span>
+                </button>
+              ))}
+              <button className="w-full py-2 rounded bg-surface-container-high text-on-surface-variant font-label-caps text-label-caps" type="button" onClick={() => setPendingStock(null)}>닫기</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function StockRow({ stock, selected, favorite, onSelect, onFavorite }) {
+  return (
+    <article className={`grid grid-cols-[1fr_auto] gap-3 p-widget-padding border-b border-outline-variant/40 hover:bg-surface-container-highest transition-colors ${selected ? "bg-primary/5" : ""}`}>
+      <button className="text-left min-w-0" type="button" onClick={onSelect}>
+        <div className="flex items-center gap-2">
+          <strong className="font-title-sm text-title-sm text-on-surface truncate">{stock.name}</strong>
+          <span className="font-label-mono text-label-mono text-on-surface-variant">{stock.code}</span>
+        </div>
+        <p className="font-body-sm text-body-sm text-on-surface-variant mt-1">{stock.market} · 거래대금 {stock.value}</p>
+      </button>
+      <div className="flex items-center gap-2">
+        <div className="text-right">
+          <p className="font-label-mono text-label-mono text-on-surface">{stock.price}</p>
+          <p className={`font-label-mono text-label-mono ${stock.change.startsWith("+") ? "text-secondary" : "text-tertiary"}`}>{stock.change}</p>
+        </div>
+        <button className="p-1 text-on-surface-variant hover:text-tertiary" type="button" onClick={onFavorite} aria-label="관심 종목">
+          <Icon className="favorite-icon" data-active={String(favorite)}>star</Icon>
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function IntradayChart() {
+  const bars = [34, 42, 38, 54, 49, 63, 58, 72, 69, 78, 74, 86, 80, 92, 88, 95];
+  return (
+    <div>
+      <h3 className="font-headline-md text-headline-md text-on-surface mb-3">일중 그래프</h3>
+      <div className="h-[220px] bg-surface-container-low rounded border border-outline-variant p-3 flex items-end gap-1">
+        {bars.map((bar, index) => (
+          <div className={`flex-1 rounded-t ${index % 5 === 2 ? "chart-bar-down" : "chart-bar-up"}`} style={{ height: `${bar}%` }} key={bar + index} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function OrderBook({ current }) {
+  const asks = ["84,500", "84,400", "84,300"];
+  const bids = ["84,100", "84,000", "83,900"];
+  return (
+    <div>
+      <h3 className="font-headline-md text-headline-md text-on-surface mb-3">호가</h3>
+      <div className="rounded border border-outline-variant overflow-hidden">
+        {asks.map((price, index) => (
+          <div className="grid grid-cols-3 gap-2 p-2 orderbook-ask" key={price}>
+            <span>매도</span>
+            <strong className="text-right">{price}</strong>
+            <span className="text-right">{(3200 - index * 410).toLocaleString()}</span>
+          </div>
+        ))}
+        <div className="grid grid-cols-3 gap-2 p-2 bg-surface-container-high text-on-surface font-title-sm text-title-sm">
+          <span>현재가</span>
+          <strong className="text-right">{current}</strong>
+          <span className="text-right">기준</span>
+        </div>
+        {bids.map((price, index) => (
+          <div className="grid grid-cols-3 gap-2 p-2 orderbook-bid" key={price}>
+            <span>매수</span>
+            <strong className="text-right">{price}</strong>
+            <span className="text-right">{(2800 + index * 530).toLocaleString()}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function OrderPanel({ selected }) {
+  const [orderSide, setOrderSide] = useState("buy");
+  const [quantity, setQuantity] = useState("10");
+  const currentPrice = Number(String(selected.current).replace(/,/g, "")) || 0;
+  const maxBuyQuantity = currentPrice ? Math.floor(ORDERABLE_CASH / currentPrice) : 0;
+  const holdingQuantity = holdingQuantities[selected.code] || 0;
+  const holdingValue = holdingQuantity * currentPrice;
+  const limitQuantity = orderSide === "buy" ? maxBuyQuantity : holdingQuantity;
+  const isBuy = orderSide === "buy";
+
+  useEffect(() => {
+    setQuantity(String(Math.min(10, Math.max(limitQuantity, 0))));
+  }, [selected.code, orderSide, limitQuantity]);
+
+  return (
+    <Section className="shrink-0">
+      <div className="p-widget-padding">
+        <h3 className="font-headline-md text-headline-md text-on-surface mb-4">주문</h3>
+        <div className="grid grid-cols-2 gap-gutter mb-gutter">
+          {[
+            ["buy", "매수", "add_shopping_cart", "최대 매수 가능", `${maxBuyQuantity.toLocaleString()}주`],
+            ["sell", "매도", "sell", "보유 잔량", `${holdingQuantity.toLocaleString()}주`]
+          ].map(([side, label, icon, metaLabel, metaValue]) => {
+            const active = orderSide === side;
+            const buySide = side === "buy";
+            return (
+              <button
+                aria-pressed={active}
+                className={`min-h-[82px] rounded-lg border p-3 text-left transition-all ${
+                  active
+                    ? buySide
+                      ? "border-secondary bg-secondary/10 text-secondary shadow-[inset_0_0_0_1px_rgb(var(--secondary-rgb)/0.3)]"
+                      : "border-tertiary bg-tertiary/10 text-tertiary shadow-[inset_0_0_0_1px_rgb(var(--tertiary-rgb)/0.3)]"
+                    : "border-outline-variant bg-surface-container-low text-on-surface-variant hover:bg-surface-container-highest"
+                }`}
+                key={side}
+                type="button"
+                onClick={() => setOrderSide(side)}
+              >
+                <span className="flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-2 font-title-sm text-title-sm">
+                    <Icon className="text-[20px]">{icon}</Icon>
+                    {label}
+                  </span>
+                  {active ? <Icon className="text-[18px]">radio_button_checked</Icon> : null}
+                </span>
+                <span className="block font-label-caps text-label-caps mt-3 opacity-80">{metaLabel}</span>
+                <span className="block font-label-mono text-label-mono mt-1">{metaValue}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div className={`rounded-lg border p-3 mb-gutter ${isBuy ? "border-secondary/50 bg-secondary/10" : "border-tertiary/50 bg-tertiary/10"}`}>
+          <div className="flex items-center justify-between gap-3">
+            <span className={`font-title-sm text-title-sm ${isBuy ? "text-secondary" : "text-tertiary"}`}>현재 선택: {isBuy ? "매수" : "매도"}</span>
+            <span className="font-label-mono text-label-mono text-on-surface">{selected.name}</span>
+          </div>
+          <div className="grid grid-cols-2 gap-gutter mt-3">
+            <div className="bg-surface-container-low rounded border border-outline-variant p-2">
+              <span className="block font-label-caps text-label-caps text-on-surface-variant">{isBuy ? "주문 가능 금액" : "보유 평가액"}</span>
+              <span className="block font-label-mono text-label-mono text-on-surface mt-1">
+                {(isBuy ? ORDERABLE_CASH : holdingValue).toLocaleString()}원
+              </span>
+            </div>
+            <div className="bg-surface-container-low rounded border border-outline-variant p-2">
+              <span className="block font-label-caps text-label-caps text-on-surface-variant">{isBuy ? "최대 매수 가능" : "보유 잔량"}</span>
+              <span className={`block font-label-mono text-label-mono mt-1 ${isBuy ? "text-secondary" : holdingQuantity > 0 ? "text-tertiary" : "text-error"}`}>
+                {limitQuantity.toLocaleString()}주
+              </span>
+            </div>
+          </div>
+          {!isBuy && holdingQuantity === 0 ? (
+            <p className="font-body-sm text-body-sm text-error mt-3">보유 수량이 없어 매도 주문을 진행할 수 없습니다.</p>
+          ) : null}
+        </div>
+        <div className="space-y-3">
+          <label className="block">
+            <span className="font-label-caps text-label-caps text-on-surface-variant">주문 방식</span>
+            <select className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-body-md text-body-md text-on-surface">
+              <option>지정가</option>
+              <option>시장가</option>
+              <option>현재가</option>
+            </select>
+          </label>
+          <label className="block">
+            <span className="font-label-caps text-label-caps text-on-surface-variant">가격</span>
+            <input className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-label-mono text-label-mono text-right text-on-surface" value={selected.current} readOnly />
+          </label>
+          <label className="block">
+            <span className="font-label-caps text-label-caps text-on-surface-variant">수량</span>
+            <input
+              className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-label-mono text-label-mono text-right text-on-surface"
+              inputMode="numeric"
+              max={limitQuantity}
+              placeholder={`최대 ${limitQuantity.toLocaleString()}주`}
+              type="text"
+              value={quantity}
+              onChange={(event) => setQuantity(event.target.value.replace(/[^\d]/g, ""))}
+            />
+          </label>
+          <button
+            className={`w-full py-2 rounded font-label-caps text-label-caps hover:brightness-110 disabled:opacity-50 disabled:hover:brightness-100 ${
+              isBuy ? "bg-secondary-container text-on-secondary-container" : "bg-tertiary-container text-on-tertiary-container"
+            }`}
+            disabled={limitQuantity <= 0}
+            type="button"
+          >
+            {isBuy ? "매수 주문 확인" : "매도 주문 확인"}
+          </button>
+        </div>
+      </div>
+    </Section>
+  );
+}
+
+function StockInfo({ selected }) {
+  return (
+    <Section className="section-scroll-sm flex-1">
+      <SectionTitle icon="info" title="종목 정보" meta={selected.market} />
+      <div className="p-widget-padding space-y-3">
+        {[
+          ["업종", selected.sector],
+          ["시가총액", selected.marketCap],
+          ["거래량", selected.volume],
+          ["고가", selected.high],
+          ["저가", selected.low],
+          ["거래대금", selected.value]
+        ].map(([label, value]) => (
+          <div className="flex items-center justify-between bg-surface-container-low rounded border border-outline-variant p-3" key={label}>
+            <span className="font-body-sm text-body-sm text-on-surface-variant">{label}</span>
+            <span className="font-label-mono text-label-mono text-on-surface">{value}</span>
+          </div>
+        ))}
+      </div>
+    </Section>
+  );
+}
+
+function StrategyPage({ navigate, favoriteGroups }) {
+  const [strategies, setStrategies] = useState(strategiesSeed);
+  const [selectedId, setSelectedId] = useState(strategiesSeed[0].id);
+  const [scope, setScope] = useState("개별 종목");
+  const [conditionSide, setConditionSide] = useState("buy");
+  const [backtestStrategy, setBacktestStrategy] = useState(strategiesSeed[0].id);
+  const selected = strategies.find((strategy) => strategy.id === selectedId) || strategies[0];
+
+  function updateStatus(status) {
+    setStrategies((current) => current.map((strategy) => strategy.id === selectedId ? { ...strategy, status } : strategy));
+  }
+
+  function deleteStrategy() {
+    setStrategies((current) => current.filter((strategy) => strategy.id !== selectedId));
+    setSelectedId((current) => {
+      const next = strategies.find((strategy) => strategy.id !== current);
+      return next?.id || current;
+    });
+  }
+
+  return (
+    <>
+      <PageHeader
+        title="전략 관리"
+        description="전략 범위와 지표 조건을 설정하고, 모의투자 기반 백테스트로 실행 전 성과를 확인합니다."
+        action={
+          <button
+            className="px-4 py-2 rounded bg-primary-container text-on-primary-container font-label-caps text-label-caps hover:brightness-110 transition-all flex items-center gap-2"
+            type="button"
+            onClick={() => {
+              const next = { ...strategiesSeed[0], id: Date.now(), name: "새 전략", status: "중지", returnRate: "0.0%", winRate: "0%" };
+              setStrategies((current) => [next, ...current]);
+              setSelectedId(next.id);
+            }}
+          >
+            <Icon className="text-[16px]">add</Icon>
+            새 전략
+          </button>
+        }
+      />
+
+      <section className="grid grid-cols-1 xl:grid-cols-12 gap-gutter items-stretch">
+        <Section className="xl:col-span-5 flex flex-col h-full">
+          <div className="p-widget-padding border-b border-outline-variant">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-headline-md text-headline-md text-on-surface">전략 목록</h3>
+              <span className="font-label-mono text-label-mono text-secondary">{strategies.length}개</span>
+            </div>
+            <div className="grid grid-cols-2 gap-gutter">
+              <div className="relative">
+                <Icon className="absolute left-3 top-1/2 -translate-y-1/2 text-outline text-[20px]">search</Icon>
+                <input className="w-full bg-surface-container-lowest border border-outline-variant rounded pl-10 pr-3 py-2 font-body-md text-body-md text-on-surface placeholder:text-outline" placeholder="전략 검색" type="search" />
+              </div>
+              <select className="bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-body-md text-body-md text-on-surface">
+                <option>전체 상태</option>
+                <option>활성</option>
+                <option>중지</option>
+              </select>
+            </div>
+          </div>
+          <div className="section-body-scroll flex-1 min-h-0 custom-scrollbar">
+            {strategies.map((strategy) => (
+              <button
+                className={`w-full p-widget-padding border-b border-outline-variant/40 text-left hover:bg-surface-container-highest ${selectedId === strategy.id ? "bg-primary/5" : ""}`}
+                key={strategy.id}
+                type="button"
+                onClick={() => setSelectedId(strategy.id)}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <strong className="font-title-sm text-title-sm text-on-surface">{strategy.name}</strong>
+                  <Badge tone={strategy.status === "활성" ? "secondary" : "neutral"}>{strategy.status}</Badge>
+                </div>
+                <p className="font-body-sm text-body-sm text-on-surface-variant mt-1">{strategy.scope} · {strategy.target}</p>
+              </button>
+            ))}
+          </div>
+        </Section>
+
+        <div className="xl:col-span-7 space-y-gutter">
+          <Section className="section-scroll-sm">
+            <div className="p-widget-padding border-b border-outline-variant flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-headline-md text-headline-md text-on-surface">{selected?.name}</h3>
+                  <Badge tone={selected?.status === "활성" ? "secondary" : "neutral"}>{selected?.status}</Badge>
+                </div>
+                <p className="font-body-sm text-body-sm text-on-surface-variant mt-1">{selected?.description}</p>
+              </div>
+              <div className="flex gap-2">
+                <button className="px-3 py-2 rounded bg-secondary-container text-on-secondary-container font-label-caps text-label-caps" type="button" onClick={() => updateStatus("활성")}>활성화</button>
+                <button className="px-3 py-2 rounded bg-surface-container-high text-on-surface-variant font-label-caps text-label-caps" type="button" onClick={() => updateStatus("중지")}>중지</button>
+                <button className="px-3 py-2 rounded bg-error-container text-on-error-container font-label-caps text-label-caps" type="button" onClick={deleteStrategy}>삭제</button>
+              </div>
+            </div>
+            <div className="p-widget-padding grid grid-cols-1 md:grid-cols-4 gap-gutter">
+              {[
+                ["적용 범위", selected?.scope],
+                ["대상", selected?.target],
+                ["최근 수익률", selected?.returnRate],
+                ["승률", selected?.winRate]
+              ].map(([label, value]) => (
+                <div className="bg-surface-container-low rounded border border-outline-variant p-3" key={label}>
+                  <p className="font-label-caps text-label-caps text-on-surface-variant mb-1">{label}</p>
+                  <p className="font-title-sm text-title-sm text-on-surface">{value}</p>
+                </div>
+              ))}
+            </div>
+          </Section>
+
+          <Section>
+            <SectionTitle icon="tune" title="전략 설정" />
+            <div className="p-widget-padding space-y-5">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-gutter">
+                <label className="block">
+                  <span className="font-label-caps text-label-caps text-on-surface-variant">전략 이름</span>
+                  <input className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-body-md text-body-md text-on-surface" defaultValue={selected?.name} type="text" />
+                </label>
+                <label className="block">
+                  <span className="font-label-caps text-label-caps text-on-surface-variant">주문 실행 방식</span>
+                  <select className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-body-md text-body-md text-on-surface">
+                    <option>승인 후 주문</option>
+                    <option>자동 주문</option>
+                  </select>
+                </label>
+              </div>
+
+              <div>
+                <p className="font-label-caps text-label-caps text-on-surface-variant mb-2">적용 범위</p>
+                <div className="grid grid-cols-3 gap-gutter">
+                  {["개별 종목", "종목 그룹", "전체 종목"].map((item) => (
+                    <button className={`py-2 rounded border font-label-caps text-label-caps ${scope === item ? "border-primary bg-primary/10 text-primary" : "border-outline-variant text-on-surface-variant hover:bg-surface-container-highest"}`} key={item} type="button" onClick={() => setScope(item)}>
+                      {item}
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-gutter">
+                  {scope === "개별 종목" ? (
+                    <div className="relative">
+                      <Icon className="absolute left-3 top-1/2 -translate-y-1/2 text-outline text-[20px]">search</Icon>
+                      <input className="w-full bg-surface-container-lowest border border-outline-variant rounded pl-10 pr-3 py-2 font-body-md text-body-md text-on-surface" placeholder="종목명 또는 코드 검색" />
+                    </div>
+                  ) : null}
+                  {scope === "종목 그룹" ? (
+                    Object.keys(favoriteGroups).length ? (
+                      <select className="w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-body-md text-body-md text-on-surface">
+                        {Object.keys(favoriteGroups).map((group) => <option key={group}>{group}</option>)}
+                      </select>
+                    ) : (
+                      <button className="px-3 py-2 rounded bg-primary-container text-on-primary-container font-body-md text-body-md" type="button" onClick={() => navigate("market")}>관심 종목 설정으로 이동</button>
+                    )
+                  ) : null}
+                  {scope === "전체 종목" ? (
+                    <p className="bg-surface-container-low rounded border border-outline-variant p-3 font-body-sm text-body-sm text-on-surface-variant">조건식 입력 없이 전체 종목을 대상으로 전략을 적용합니다.</p>
+                  ) : null}
+                </div>
+              </div>
+
+              <div>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-2">
+                  <p className="font-label-caps text-label-caps text-on-surface-variant">지표 조건</p>
+                  <div className="grid grid-cols-2 gap-gutter sm:w-[260px]">
+                    {[
+                      ["buy", "매수 조건"],
+                      ["sell", "매도 조건"]
+                    ].map(([side, label]) => (
+                      <button className={`py-2 rounded border font-label-caps text-label-caps ${conditionSide === side ? "border-primary bg-primary/10 text-primary" : "border-outline-variant text-on-surface-variant hover:bg-surface-container-highest"}`} key={side} type="button" onClick={() => setConditionSide(side)}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-gutter">
+                  {(conditionSide === "buy"
+                    ? [["거래량 증가율", "이상", "130"], ["RSI", "이하", "55"], ["현재가", "상향 돌파", "20일선"], ["외국인 순매수", "이상", "50억"]]
+                    : [["손절률", "이하", "-3"], ["수익률", "이상", "6"], ["RSI", "이상", "72"], ["거래량 감소율", "이상", "40"]]
+                  ).map(([indicator, operator, value]) => (
+                    <div className="grid grid-cols-3 gap-gutter bg-surface-container-low rounded border border-outline-variant p-3" key={`${conditionSide}-${indicator}`}>
+                      <select className="bg-surface-container-lowest border border-outline-variant rounded px-2 py-2 font-body-sm text-body-sm text-on-surface" defaultValue={indicator}>
+                        <option>{indicator}</option>
+                        <option>이동평균선</option>
+                        <option>MACD</option>
+                        <option>체결강도</option>
+                      </select>
+                      <select className="bg-surface-container-lowest border border-outline-variant rounded px-2 py-2 font-body-sm text-body-sm text-on-surface" defaultValue={operator}>
+                        <option>{operator}</option>
+                        <option>이상</option>
+                        <option>이하</option>
+                        <option>상향 돌파</option>
+                        <option>하향 이탈</option>
+                      </select>
+                      <input className="bg-surface-container-lowest border border-outline-variant rounded px-2 py-2 font-label-mono text-label-mono text-right text-on-surface" defaultValue={value} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-gutter">
+                <NumberInput label="전략별 손실 한도" value="500,000" suffix="원" />
+                <NumberInput label="종목별 주문 한도" value="2,000,000" suffix="원" />
+                <button className="self-end py-2 rounded bg-primary-container text-on-primary-container font-label-caps text-label-caps hover:brightness-110" type="button">설정 저장</button>
+              </div>
+            </div>
+          </Section>
+
+          <Section className="section-scroll">
+            <div className="p-widget-padding border-b border-outline-variant flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Icon className="text-secondary">science</Icon>
+                <h3 className="font-headline-md text-headline-md text-on-surface">모의투자 기반 백테스트</h3>
+              </div>
+              <button className="px-3 py-2 rounded bg-secondary-container text-on-secondary-container font-label-caps text-label-caps hover:brightness-110" type="button">백테스트 실행</button>
+            </div>
+            <div className="p-widget-padding space-y-gutter">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-gutter">
+                <label className="block">
+                  <span className="font-label-caps text-label-caps text-on-surface-variant">전략 선택</span>
+                  <select className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-body-md text-body-md text-on-surface" value={backtestStrategy} onChange={(event) => setBacktestStrategy(Number(event.target.value))}>
+                    {strategies.map((strategy) => <option key={strategy.id} value={strategy.id}>{strategy.name}</option>)}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="font-label-caps text-label-caps text-on-surface-variant">시작일</span>
+                  <input className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-label-mono text-label-mono text-on-surface" type="date" defaultValue="2026-01-02" />
+                </label>
+                <label className="block">
+                  <span className="font-label-caps text-label-caps text-on-surface-variant">종료일</span>
+                  <input className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-label-mono text-label-mono text-on-surface" type="date" defaultValue="2026-06-19" />
+                </label>
+                <NumberInput label="초기 자금" value="10,000,000" suffix="원" />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-gutter">
+                {[
+                  ["누적 수익률", "+12.4%", "secondary"],
+                  ["승률", "61.8%", "primary"],
+                  ["최대 낙폭", "-4.2%", "tertiary"],
+                  ["거래 횟수", "84회", "neutral"]
+                ].map(([label, value, tone]) => (
+                  <div className="bg-surface-container-low rounded border border-outline-variant p-3" key={label}>
+                    <p className="font-body-sm text-body-sm text-on-surface-variant">{label}</p>
+                    <p className={`font-headline-md text-headline-md mt-1 ${tone === "secondary" ? "text-secondary" : tone === "primary" ? "text-primary" : tone === "tertiary" ? "text-tertiary" : "text-on-surface"}`}>{value}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </Section>
+        </div>
+      </section>
+    </>
+  );
+}
+
+function NumberInput({ label, value, suffix }) {
+  return (
+    <label className="block">
+      <span className="font-label-caps text-label-caps text-on-surface-variant">{label}</span>
+      <div className="mt-1 flex">
+        <input className="w-full bg-surface-container-lowest border border-outline-variant rounded-l px-3 py-2 font-label-mono text-label-mono text-right text-on-surface" defaultValue={value} />
+        <span className="px-3 py-2 bg-surface-container-highest border-y border-r border-outline-variant rounded-r font-label-mono text-label-mono text-on-surface-variant">{suffix}</span>
+      </div>
+    </label>
+  );
+}
+
+function RecordPage() {
+  return (
+    <>
+      <PageHeader
+        title="기록 및 알림"
+        description="거래 기록과 시스템 알림을 한 곳에서 확인합니다."
+        action={
+          <button className="px-4 py-2 rounded border border-outline-variant text-on-surface-variant font-label-caps text-label-caps hover:bg-surface-container-highest transition-colors flex items-center gap-2" type="button">
+            <Icon className="text-[18px]">download</Icon>
+            CSV 내보내기
+          </button>
+        }
+      />
+
+      <section className="grid grid-cols-1 md:grid-cols-5 gap-3 p-widget-padding bg-surface-container rounded-lg border border-outline-variant">
+        <FilterControl label="시작일" type="date" defaultValue="2026-06-17" />
+        <FilterControl label="종료일" type="date" defaultValue="2026-06-21" />
+        <FilterControl label="전략" options={["모든 전략", "시가 돌파 전략", "종가 회귀 전략", "수급 추적 전략"]} />
+        <FilterControl label="구분" options={["전체 기록", "주문", "전략", "리스크", "시스템"]} />
+        <FilterControl label="상태" options={["전체 상태", "완료", "대기", "중지", "확인 필요"]} />
+      </section>
+
+      <div className="grid grid-cols-12 gap-gutter items-stretch">
+        <Section className="col-span-12 lg:col-span-9 flex flex-col section-bound-tall h-full" id="records">
+          <SectionTitle icon="history" title="거래 기록" meta="필수 기록" />
+          <div className="divide-y divide-outline-variant/40 section-body-scroll flex-1 min-h-0 custom-scrollbar">
+            <div className="hidden md:grid md:grid-cols-12 gap-3 px-widget-padding py-2 bg-surface-container-low font-label-caps text-label-caps text-outline uppercase">
+              <span className="md:col-span-2">시간</span>
+              <span className="md:col-span-1">구분</span>
+              <span className="md:col-span-2">대상</span>
+              <span className="md:col-span-5">내용</span>
+              <span className="md:col-span-2 text-right">상태</span>
+            </div>
+            {recordRows.map(([time, type, target, body, status]) => (
+              <article className={`grid grid-cols-1 md:grid-cols-12 items-center gap-1 md:gap-3 px-widget-padding py-3 hover:bg-surface-container-highest transition-colors min-w-0 ${status === "중지" ? "bg-error-container/5" : ""}`} key={time}>
+                <span className="md:col-span-2 font-label-mono text-label-mono text-on-surface-variant whitespace-nowrap">{time}</span>
+                <span className="md:col-span-1 w-fit">
+                  <Badge tone={type === "리스크" ? "error" : type === "주문" ? "secondary" : type === "시스템" ? "neutral" : "primary"}>{type}</Badge>
+                </span>
+                <span className="md:col-span-2 font-title-sm text-title-sm text-on-surface truncate min-w-0">{target}</span>
+                <span className={`md:col-span-5 font-body-md text-body-md truncate min-w-0 ${status === "중지" ? "text-error" : "text-on-surface-variant"}`}>{body}</span>
+                <span className={`md:col-span-2 font-label-mono text-label-mono md:text-right ${status === "완료" ? "text-secondary" : status === "대기" ? "text-primary" : status === "중지" ? "text-error" : "text-tertiary"}`}>{status}</span>
+              </article>
+            ))}
+          </div>
+          <div className="mt-auto p-4 border-t border-outline-variant bg-surface-container-low flex justify-between items-center">
+            <span className="font-label-mono text-label-mono text-on-surface-variant">{recordRows.length}건 표시 중</span>
+            <span className="font-label-mono text-label-mono text-on-surface-variant">필수 기록만 표시</span>
+          </div>
+        </Section>
+
+        <aside className="col-span-12 lg:col-span-3 flex flex-col gap-gutter h-full">
+          <div className="bg-surface-container border border-outline-variant rounded-lg p-widget-padding section-body-scroll flex-1 h-full custom-scrollbar">
+            <h3 className="font-label-caps text-label-caps text-outline uppercase mb-4 flex items-center justify-between">
+              기간 요약
+              <span className="font-label-mono text-label-mono text-secondary-container">2026-06-17 ~ 2026-06-21</span>
+            </h3>
+            <div className="space-y-4">
+              {[
+                ["총 기록 건수", "7", "필수 기록"],
+                ["완료된 기록", "4", "57%"],
+                ["확인 필요", "2", "검토"]
+              ].map(([label, value, meta]) => (
+                <div key={label}>
+                  <p className="font-body-sm text-body-sm text-on-surface-variant mb-1">{label}</p>
+                  <div className="flex items-end justify-between">
+                    <span className="font-display text-3xl font-bold text-on-surface">{value}</span>
+                    <span className="text-on-surface-variant font-label-mono text-label-mono">{meta}</span>
+                  </div>
+                  <div className="h-px bg-outline-variant/30 mt-4" />
+                </div>
+              ))}
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      <Section className="section-scroll-tall scroll-mt-16" id="alerts">
+        <SectionTitle icon="notifications" title="알림" meta={`${alerts.length}건`} />
+        <div className="divide-y divide-outline-variant/40">
+          {alerts.map(([icon, color, title, body, time], index) => (
+            <article className={`p-widget-padding flex items-start gap-3 ${index === 0 ? "bg-error-container/5" : ""}`} key={title}>
+              <Icon className={`${color} mt-0.5`}>{icon}</Icon>
+              <div className="flex-1">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h4 className="font-title-sm text-title-sm text-on-surface">{title}</h4>
+                  <span className="font-label-mono text-label-mono text-on-surface-variant">{time}</span>
+                </div>
+                <p className="font-body-md text-body-md text-on-surface-variant mt-1">{body}</p>
+              </div>
+            </article>
+          ))}
+        </div>
+      </Section>
+    </>
+  );
+}
+
+function FilterControl({ label, type = "select", defaultValue, options }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="font-label-caps text-label-caps text-outline uppercase">{label}</label>
+      {type === "date" ? (
+        <input className="bg-surface-container-lowest border border-outline-variant text-on-surface font-body-md text-body-md p-2 focus:ring-1 focus:ring-primary outline-none" type="date" defaultValue={defaultValue} />
+      ) : (
+        <select className="bg-surface-container-lowest border border-outline-variant text-on-surface font-body-md text-body-md p-2 focus:ring-1 focus:ring-primary outline-none">
+          {options.map((option) => <option key={option}>{option}</option>)}
+        </select>
+      )}
+    </div>
+  );
+}
+
+function SettingsPage({ theme, setTheme, nickname, updateNickname }) {
+  const [nicknameDraft, setNicknameDraft] = useState(nickname || "AeroTrade 사용자");
+  const [passwordMessage, setPasswordMessage] = useState("보안을 위해 현재 비밀번호를 확인한 뒤 새 비밀번호로 변경합니다.");
+  const [orderMode, setOrderMode] = useState("승인 후 주문");
+  const [emergencyEnabled, setEmergencyEnabled] = useState(true);
+  const [kiwoomEnv, setKiwoomEnv] = useState("real");
+  const [kiwoomCredentials, setKiwoomCredentials] = useState({
+    real: { appKey: "", appSecret: "" },
+    mock: { appKey: "", appSecret: "" }
+  });
+  const [kiwoomStatus, setKiwoomStatus] = useState({ real: "미연결", mock: "미연결" });
+  const [kiwoomMessage, setKiwoomMessage] = useState("실전과 모의 환경의 API 키를 각각 입력할 수 있습니다.");
+  const [showRealConnectWarning, setShowRealConnectWarning] = useState(false);
+
+  const activeKiwoomCredentials = kiwoomCredentials[kiwoomEnv];
+  const activeKiwoomLabel = kiwoomEnv === "real" ? "실전" : "모의";
+
+  function updateKiwoomCredential(field, value) {
+    setKiwoomCredentials((current) => ({
+      ...current,
+      [kiwoomEnv]: {
+        ...current[kiwoomEnv],
+        [field]: value
+      }
+    }));
+  }
+
+  function connectKiwoom() {
+    if (kiwoomEnv === "real") {
+      setShowRealConnectWarning(true);
+      return;
+    }
+    setKiwoomStatus((current) => ({ ...current, mock: "연결됨" }));
+    setKiwoomMessage("모의 환경 연결이 준비되었습니다.");
+  }
+
+  function confirmRealConnection() {
+    setShowRealConnectWarning(false);
+    setKiwoomStatus((current) => ({ ...current, real: "연결됨" }));
+    setKiwoomMessage("실전 환경 연결이 준비되었습니다. 실제 주문 가능 환경이므로 주문 실행 전 설정을 다시 확인하세요.");
+  }
+
+  useEffect(() => {
+    setNicknameDraft(nickname || "AeroTrade 사용자");
+  }, [nickname]);
+
+  return (
+    <>
+      <PageHeader
+        title="설정"
+        description="프로필, 화면 모드, 비밀번호, 키움증권 연결, 주문 실행 방식을 관리합니다."
+        action={
+          <button className="px-4 py-2 rounded border border-outline-variant text-on-surface-variant font-label-caps text-label-caps hover:bg-surface-container-highest transition-colors" type="button">초기화</button>
+        }
+      />
+
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-gutter items-stretch">
+        <Section className="xl:col-span-12 scroll-mt-16 section-scroll h-full" id="profile-security">
+          <div className="p-widget-padding border-b border-outline-variant flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Icon className="text-primary">account_circle</Icon>
+              <h3 className="font-headline-md text-headline-md text-on-surface">프로필 및 보안</h3>
+            </div>
+            <span className="font-label-mono text-label-mono text-secondary">활성</span>
+          </div>
+          <div className="p-widget-padding space-y-5">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center">
+              <div className="w-20 h-20 rounded-lg bg-primary-container flex items-center justify-center shrink-0">
+                <Icon className="text-[36px] text-on-primary-container">person</Icon>
+              </div>
+              <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-gutter">
+                <label className="block">
+                  <span className="font-label-caps text-label-caps text-on-surface-variant">닉네임</span>
+                  <input className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-body-md text-body-md text-on-surface" type="text" value={nicknameDraft} onChange={(event) => setNicknameDraft(event.target.value)} onBlur={() => updateNickname(nicknameDraft)} />
+                </label>
+                <label className="block">
+                  <span className="font-label-caps text-label-caps text-on-surface-variant">프로필 사진</span>
+                  <input className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-body-sm text-body-sm text-on-surface file:mr-3 file:border-0 file:bg-surface-container-high file:text-primary file:font-label-caps" type="file" accept="image/*" />
+                </label>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-gutter">
+              <PasswordField label="현재 비밀번호" placeholder="현재 비밀번호" />
+              <PasswordField label="새 비밀번호" placeholder="8자 이상" />
+              <PasswordField label="새 비밀번호 확인" placeholder="다시 입력" />
+              <button className="self-end py-2 rounded bg-primary-container text-on-primary-container font-body-md text-body-md font-bold hover:brightness-110 transition-all" type="button" onClick={() => setPasswordMessage("보안 변경사항 적용 요청이 준비되었습니다. Supabase Auth 연결 후 실제 변경이 실행됩니다.")}>변경사항 적용</button>
+            </div>
+            <p className="font-body-sm text-body-sm text-on-surface-variant">{passwordMessage}</p>
+          </div>
+        </Section>
+
+        <div className="xl:col-span-5 flex flex-col gap-gutter">
+          <Section>
+            <SectionTitle icon="contrast" title="화면 모드" />
+            <div className="p-widget-padding grid grid-cols-1 sm:grid-cols-2 gap-gutter">
+              {[
+                ["dark", "dark_mode", "블랙 모드", "저조도 화면"],
+                ["light", "light_mode", "화이트 모드", "밝은 화면"]
+              ].map(([value, icon, title, meta]) => (
+                <button
+                  className="theme-choice rounded-lg border border-outline-variant bg-surface-container-low p-4 text-left hover:bg-surface-container-highest transition-colors"
+                  data-active={String(theme === value)}
+                  key={value}
+                  type="button"
+                  onClick={() => setTheme(value)}
+                >
+                  <Icon className="text-primary text-[24px]">{icon}</Icon>
+                  <span className="theme-choice-title block font-title-sm text-title-sm text-on-surface mt-2">{title}</span>
+                  <span className="theme-choice-meta block font-body-sm text-body-sm text-on-surface-variant mt-1">{meta}</span>
+                </button>
+              ))}
+            </div>
+          </Section>
+
+          <Section className="section-scroll-sm">
+            <SectionTitle icon="bolt" title="기본 주문 실행 방식" />
+            <div className="p-widget-padding space-y-3">
+              {[
+                ["승인 후 주문", "fact_check", "신호 확인 후 사용자가 승인하면 주문을 실행합니다."],
+                ["자동 주문", "rocket_launch", "조건이 충족되면 시스템이 즉시 주문을 실행합니다."]
+              ].map(([mode, icon, desc]) => {
+                const active = orderMode === mode;
+                return (
+                  <button className={`w-full flex items-center justify-between gap-3 p-3 rounded-lg border transition-colors ${active ? "border-primary/50 bg-primary/5" : "border-outline-variant hover:bg-surface-container-highest"}`} key={mode} type="button" onClick={() => setOrderMode(mode)}>
+                    <span className="flex items-start gap-3 text-left">
+                      <Icon className={active ? "text-primary" : "text-on-surface-variant"}>{icon}</Icon>
+                      <span>
+                        <span className={`block font-title-sm text-title-sm ${active ? "text-primary" : "text-on-surface"}`}>{mode}</span>
+                        <span className={`block font-body-sm text-body-sm mt-1 ${active ? "text-primary/80" : "text-on-surface-variant"}`}>{desc}</span>
+                      </span>
+                    </span>
+                    <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${active ? "border-primary" : "border-outline"}`}>
+                      {active ? <span className="w-2.5 h-2.5 rounded-full bg-primary" /> : null}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </Section>
+
+          <Section className="section-scroll-sm border-error/30">
+            <div className="p-widget-padding border-b border-error/20 flex items-center gap-2">
+              <Icon className="text-error">warning</Icon>
+              <h3 className="font-headline-md text-headline-md text-error">긴급 중지 설정</h3>
+            </div>
+            <div className="p-widget-padding space-y-4">
+              <p className="font-body-sm text-body-sm text-on-surface-variant">이 옵션이 켜져 있을 때만 사이드바의 긴급 중지 버튼을 사용할 수 있습니다.</p>
+              <label className="flex items-center justify-between gap-4 p-3 rounded bg-error/10 border border-error/20">
+                <span>
+                  <span className="block font-title-sm text-title-sm text-on-error-container">긴급 중지 버튼 활성화</span>
+                  <span className="block font-body-sm text-body-sm text-on-error-container/80 mt-1">미체결 주문 취소와 자동 주문 중단 기능을 사용할 수 있게 합니다.</span>
+                </span>
+                <input className="rounded bg-surface-container-lowest border-error/40 text-error focus:ring-error" type="checkbox" checked={emergencyEnabled} onChange={(event) => setEmergencyEnabled(event.target.checked)} />
+              </label>
+              <div className="flex items-center justify-between bg-surface-container-low rounded border border-outline-variant p-3">
+                <span className="font-body-sm text-body-sm text-on-surface-variant">현재 상태</span>
+                <span className="font-label-mono text-label-mono text-error">{emergencyEnabled ? "활성화됨" : "비활성화됨"}</span>
+              </div>
+            </div>
+          </Section>
+        </div>
+
+        <div className="xl:col-span-7 flex flex-col gap-gutter">
+          <Section>
+            <div className="p-widget-padding border-b border-outline-variant flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Icon className="text-primary">api</Icon>
+                <h3 className="font-headline-md text-headline-md text-on-surface">키움증권 API 연결</h3>
+              </div>
+              <div className={`flex items-center gap-2 px-2 py-1 rounded ${kiwoomStatus[kiwoomEnv] === "연결됨" ? "bg-secondary/10 text-secondary" : "bg-surface-container-high text-on-surface-variant"}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${kiwoomStatus[kiwoomEnv] === "연결됨" ? "bg-secondary" : "bg-outline"}`} />
+                <span className="font-label-caps text-label-caps">{activeKiwoomLabel} {kiwoomStatus[kiwoomEnv]}</span>
+              </div>
+            </div>
+            <div className="p-widget-padding space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-gutter">
+                <div>
+                  <span className="font-label-caps text-label-caps text-on-surface-variant">증권사</span>
+                  <div className="mt-1 flex items-center justify-between bg-surface-container-lowest border border-outline-variant rounded px-3 py-2">
+                    <span className="font-body-md text-body-md text-on-surface">키움증권</span>
+                    <span className="font-label-mono text-label-mono text-secondary">고정</span>
+                  </div>
+                </div>
+                <label className="block">
+                  <span className="font-label-caps text-label-caps text-on-surface-variant">실행 환경</span>
+                  <div className="mt-1 flex bg-surface-container-lowest border border-outline-variant rounded p-1">
+                    {[
+                      ["real", "실전"],
+                      ["mock", "모의"]
+                    ].map(([env, label]) => {
+                      const active = kiwoomEnv === env;
+                      return (
+                        <button
+                          className={`flex-1 py-1.5 rounded font-label-mono text-label-mono transition-colors ${active ? "bg-surface-container-highest text-primary" : "text-on-surface-variant hover:text-on-surface"}`}
+                          key={env}
+                          type="button"
+                          onClick={() => setKiwoomEnv(env)}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </label>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-gutter">
+                <label className="block">
+                  <span className="font-label-caps text-label-caps text-on-surface-variant">{activeKiwoomLabel} 앱 키</span>
+                  <input
+                    className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-label-mono text-label-mono text-on-surface"
+                    placeholder={`${activeKiwoomLabel} 앱 키 입력`}
+                    type="password"
+                    value={activeKiwoomCredentials.appKey}
+                    onChange={(event) => updateKiwoomCredential("appKey", event.target.value)}
+                  />
+                </label>
+                <label className="block">
+                  <span className="font-label-caps text-label-caps text-on-surface-variant">{activeKiwoomLabel} 앱 시크릿</span>
+                  <input
+                    className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-label-mono text-label-mono text-on-surface"
+                    placeholder={`${activeKiwoomLabel} 앱 시크릿 입력`}
+                    type="password"
+                    value={activeKiwoomCredentials.appSecret}
+                    onChange={(event) => updateKiwoomCredential("appSecret", event.target.value)}
+                  />
+                </label>
+              </div>
+              <p className={`font-body-sm text-body-sm ${kiwoomEnv === "real" ? "text-tertiary" : "text-on-surface-variant"}`}>
+                {kiwoomMessage}
+              </p>
+              <div className="flex flex-col sm:flex-row gap-gutter">
+                <button className="flex-1 py-2 rounded bg-primary-container text-on-primary-container font-label-caps text-label-caps hover:brightness-110 transition-all flex items-center justify-center gap-2" type="button" onClick={connectKiwoom}>
+                  <Icon className="text-[16px]">link</Icon>
+                  연결
+                </button>
+                <button
+                  className="px-4 py-2 rounded border border-outline-variant text-on-surface-variant font-label-caps text-label-caps hover:bg-surface-container-highest"
+                  type="button"
+                  onClick={() => {
+                    setKiwoomCredentials((current) => ({ ...current, [kiwoomEnv]: { appKey: "", appSecret: "" } }));
+                    setKiwoomStatus((current) => ({ ...current, [kiwoomEnv]: "미연결" }));
+                    setKiwoomMessage(`${activeKiwoomLabel} API 키를 다시 입력합니다.`);
+                  }}
+                >
+                  키 다시 입력
+                </button>
+              </div>
+            </div>
+          </Section>
+
+          <Section className="section-scroll flex flex-1 flex-col">
+            <SectionTitle icon="notifications" title="알림" meta="설정" tone="text-secondary" />
+            <div className="flex-1 divide-y divide-outline-variant flex flex-col">
+              {[
+                ["주문 체결 알림", "매수와 매도 체결 결과를 알려줍니다.", true],
+                ["전략 상태 알림", "전략이 시작되거나 중지될 때 알려줍니다.", true],
+                ["시스템 점검 알림", "API 연결, 데이터 수신 상태 변화를 알려줍니다.", false]
+              ].map(([title, desc, checked]) => (
+                <label className="flex flex-1 items-center justify-between gap-3 p-widget-padding" key={title}>
+                  <span>
+                    <span className="block font-title-sm text-title-sm text-on-surface">{title}</span>
+                    <span className="block font-body-sm text-body-sm text-on-surface-variant mt-1">{desc}</span>
+                  </span>
+                  <input className="rounded bg-surface-container-lowest border-outline-variant text-primary focus:ring-primary" type="checkbox" defaultChecked={checked} />
+                </label>
+              ))}
+            </div>
+          </Section>
+        </div>
+      </div>
+      {showRealConnectWarning ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-[520px] overflow-hidden rounded-lg border border-error/30 bg-surface-container">
+            <div className="p-widget-padding border-b border-error/20 flex items-center gap-2">
+              <Icon className="text-error">warning</Icon>
+              <h3 className="font-headline-md text-headline-md text-error">실전 환경 연결 확인</h3>
+            </div>
+            <div className="p-widget-padding space-y-4">
+              <p className="font-body-md text-body-md text-on-surface-variant">
+                실전 환경으로 연결하면 실제 계좌와 주문 가능 환경에 접근할 수 있습니다. 자동 주문 또는 주문 승인 설정을 다시 확인한 뒤 연결하세요.
+              </p>
+              <div className="rounded border border-error/20 bg-error/10 p-3">
+                <span className="block font-label-caps text-label-caps text-error">현재 선택</span>
+                <span className="block font-title-sm text-title-sm text-on-error-container mt-1">키움증권 실전 API</span>
+              </div>
+              <div className="flex flex-col-reverse gap-gutter sm:flex-row sm:justify-end">
+                <button
+                  className="px-4 py-2 rounded border border-outline-variant text-on-surface-variant font-label-caps text-label-caps hover:bg-surface-container-highest"
+                  type="button"
+                  onClick={() => setShowRealConnectWarning(false)}
+                >
+                  취소
+                </button>
+                <button
+                  className="px-4 py-2 rounded bg-error-container text-on-error-container font-label-caps text-label-caps hover:brightness-110"
+                  type="button"
+                  onClick={confirmRealConnection}
+                >
+                  실전으로 연결
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function PasswordField({ label, placeholder }) {
+  return (
+    <label className="block">
+      <span className="font-label-caps text-label-caps text-on-surface-variant">{label}</span>
+      <input className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-label-mono text-label-mono text-on-surface" type="password" placeholder={placeholder} />
+    </label>
+  );
+}
+
+function LoginPage({ navigate, updateNickname }) {
+  const [mode, setMode] = useState("login");
+  const [nickname, setNickname] = useState("");
+
+  return (
+    <main className="min-h-screen bg-surface-container-lowest flex items-center justify-center p-6 font-body-md text-body-md">
+      <section className="w-full max-w-[460px] bg-surface-container border border-outline-variant rounded-lg overflow-hidden">
+        <div className="p-6 border-b border-outline-variant">
+          <h1 className="font-display text-display text-primary uppercase">AeroTrade</h1>
+          <p className="font-body-md text-body-md text-on-surface-variant mt-2">Supabase 인증 연결을 고려한 로그인 화면입니다.</p>
+        </div>
+        <div className="p-6 space-y-5">
+          <div className="grid grid-cols-2 gap-gutter">
+            <button className={`py-2 rounded border font-label-caps text-label-caps ${mode === "login" ? "border-primary bg-primary/10 text-primary" : "border-outline-variant text-on-surface-variant"}`} type="button" onClick={() => setMode("login")}>로그인</button>
+            <button className={`py-2 rounded border font-label-caps text-label-caps ${mode === "signup" ? "border-primary bg-primary/10 text-primary" : "border-outline-variant text-on-surface-variant"}`} type="button" onClick={() => setMode("signup")}>회원가입</button>
+          </div>
+
+          {mode === "signup" ? (
+            <label className="block">
+              <span className="font-label-caps text-label-caps text-on-surface-variant">닉네임</span>
+              <input className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-body-md text-body-md text-on-surface" placeholder="상단바에 표시할 이름" value={nickname} onChange={(event) => setNickname(event.target.value)} />
+            </label>
+          ) : null}
+
+          <label className="block">
+            <span className="font-label-caps text-label-caps text-on-surface-variant">이메일</span>
+            <input className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-body-md text-body-md text-on-surface" placeholder="you@example.com" type="email" />
+          </label>
+          <PasswordField label="비밀번호" placeholder="비밀번호" />
+
+          <button
+            className="w-full py-3 rounded bg-primary-container text-on-primary-container font-title-sm text-title-sm font-bold hover:brightness-110"
+            type="button"
+            onClick={() => {
+              if (mode === "signup" && nickname.trim()) updateNickname(nickname);
+              navigate("dashboard");
+            }}
+          >
+            {mode === "signup" ? "회원가입" : "로그인"}
+          </button>
+
+          <button className="w-full text-center font-body-sm text-body-sm text-on-surface-variant hover:text-primary" type="button" onClick={() => setMode("reset")}>
+            비밀번호를 잊으셨나요?
+          </button>
+
+          {mode === "reset" ? (
+            <div className="bg-surface-container-low rounded border border-outline-variant p-4">
+              <h2 className="font-headline-md text-headline-md text-on-surface">비밀번호 재설정</h2>
+              <p className="font-body-sm text-body-sm text-on-surface-variant mt-1">Supabase Auth 연결 후 이메일 재설정 링크를 발송할 수 있습니다.</p>
+            </div>
+          ) : null}
+        </div>
+      </section>
+    </main>
+  );
+}
+
+export default App;
