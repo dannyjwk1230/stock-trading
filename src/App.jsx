@@ -241,36 +241,88 @@ const initialMarketOrders = [
   }
 ];
 
+const marketOrdersByModeSeed = {
+  real: initialMarketOrders,
+  mock: initialMarketOrders.map((order) => ({
+    ...order,
+    id: order.id + 2000,
+    status: order.status === "체결" ? "체결" : order.status === "취소" ? "취소" : "접수"
+  }))
+};
+
+const defaultBuyConditions = [
+  ["거래량 증가율", "이상", "130"],
+  ["RSI", "이하", "55"],
+  ["현재가", "상향 돌파", "20일선"],
+  ["외국인 순매수", "이상", "50억"]
+];
+
+const defaultSellConditions = [
+  ["손절률", "이하", "-3"],
+  ["수익률", "이상", "6"],
+  ["RSI", "이상", "72"],
+  ["거래량 감소율", "이상", "40"]
+];
+
 const strategiesSeed = [
   {
     id: 1,
     name: "시가 돌파 전략",
     status: "활성",
+    orderMode: "승인 후 주문",
     scope: "개별 종목",
     target: "삼성전자 외 2개",
     returnRate: "+8.7%",
     winRate: "62%",
-    description: "장 초반 거래량과 돌파 조건을 함께 확인합니다."
+    description: "장 초반 거래량과 돌파 조건을 함께 확인합니다.",
+    buyConditions: defaultBuyConditions,
+    sellConditions: defaultSellConditions
   },
   {
     id: 2,
     name: "종가 회귀 전략",
     status: "중지",
+    orderMode: "자동 주문",
     scope: "종목 그룹",
     target: "단기 관찰",
     returnRate: "+3.1%",
     winRate: "55%",
-    description: "과매도 후 종가 회복 패턴을 기준으로 진입합니다."
+    description: "과매도 후 종가 회복 패턴을 기준으로 진입합니다.",
+    buyConditions: [
+      ["RSI", "이하", "35"],
+      ["현재가", "상향 돌파", "5일선"],
+      ["거래량 증가율", "이상", "90"],
+      ["체결강도", "이상", "105"]
+    ],
+    sellConditions: [
+      ["수익률", "이상", "4"],
+      ["손절률", "이하", "-2"],
+      ["현재가", "하향 이탈", "5일선"],
+      ["RSI", "이상", "62"]
+    ]
   },
   {
     id: 3,
     name: "수급 추적 전략",
     status: "활성",
+    orderMode: "승인 후 주문",
     scope: "전체 종목",
     target: "전체 종목",
     returnRate: "+5.4%",
     winRate: "59%",
-    description: "기관과 외국인 순매수 흐름을 추적합니다."
+    description: "기관과 외국인 순매수 흐름을 추적합니다.",
+    buyConditions: [
+      ["외국인 순매수", "이상", "80억"],
+      ["기관 순매수", "이상", "40억"],
+      ["거래대금", "이상", "500억"],
+      ["MACD", "상향 돌파", "시그널"]
+    ],
+    sellConditions: [
+      ["외국인 순매수", "이하", "-30억"],
+      ["기관 순매수", "이하", "-20억"],
+      ["수익률", "이상", "7"],
+      ["손절률", "이하", "-3.5"]
+    ]
   }
 ];
 
@@ -397,12 +449,25 @@ function Badge({ children, tone = "primary" }) {
   return <span className={`px-2 py-1 rounded font-label-caps text-label-caps ${colors[tone]}`}>{children}</span>;
 }
 
+function getKoreanOrderTime() {
+  return new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  }).format(new Date());
+}
+
 function App() {
   const [route, setRoute] = useState(readRoute);
   const [theme, setThemeState] = useState(getInitialTheme);
   const [nickname, setNicknameState] = useState(getInitialNickname);
   const [executionMode, setExecutionModeState] = useState(getInitialExecutionMode);
   const [strategiesByMode, setStrategiesByMode] = useState(strategiesByModeSeed);
+  const [ordersByMode, setOrdersByMode] = useState(marketOrdersByModeSeed);
+  const [emergencyEnabled, setEmergencyEnabled] = useState(true);
+  const [emergencyNotice, setEmergencyNotice] = useState("");
   const [isAuthenticated, setIsAuthenticated] = useState(getInitialAuthSession);
   const [clock, setClock] = useState("");
 
@@ -475,13 +540,52 @@ function App() {
   function updateCurrentStrategies(updater) {
     setStrategiesByMode((current) => ({
       ...current,
-      [executionMode]: typeof updater === "function" ? updater(current[executionMode]) : updater
+      [executionMode]: typeof updater === "function" ? updater(current[executionMode] || []) : updater
     }));
+  }
+
+  function updateCurrentOrders(updater) {
+    setOrdersByMode((current) => ({
+      ...current,
+      [executionMode]: typeof updater === "function" ? updater(current[executionMode] || []) : updater
+    }));
+  }
+
+  function triggerEmergencyStop() {
+    if (!emergencyEnabled) {
+      setEmergencyNotice("설정에서 긴급 중지 버튼이 비활성화되어 있습니다.");
+      return;
+    }
+
+    const modeLabel = accountProfiles[executionMode].shortLabel;
+    const now = getKoreanOrderTime();
+    const currentOrders = ordersByMode[executionMode] || [];
+    const currentStrategies = strategiesByMode[executionMode] || [];
+    const canceledOrderCount = currentOrders.filter((order) => OPEN_ORDER_STATUSES.includes(order.status)).length;
+    const stoppedStrategyCount = currentStrategies.filter((strategy) => strategy.status === "활성").length;
+
+    updateCurrentOrders((orders) =>
+      orders.map((order) =>
+        OPEN_ORDER_STATUSES.includes(order.status)
+          ? { ...order, status: "취소", time: now }
+          : order
+      )
+    );
+    updateCurrentStrategies((strategies) =>
+      strategies.map((strategy) =>
+        strategy.status === "활성"
+          ? { ...strategy, status: "중지" }
+          : strategy
+      )
+    );
+
+    setEmergencyNotice(`${modeLabel} 모드에서 미체결 주문 ${canceledOrderCount}건을 취소하고 활성 전략 ${stoppedStrategyCount}개를 중지했습니다.`);
   }
 
   const profileName = nickname || "프로필";
   const accountProfile = accountProfiles[executionMode];
   const currentStrategies = strategiesByMode[executionMode] || [];
+  const currentOrders = ordersByMode[executionMode] || [];
   const otherMode = executionMode === "real" ? "mock" : "real";
   const appRoute = isAuthenticated && route.page === "login" ? { page: "dashboard", anchor: "" } : route;
 
@@ -490,9 +594,19 @@ function App() {
   }
 
   return (
-    <Shell route={appRoute} navigate={navigate} profileName={profileName} clock={clock} executionMode={executionMode} onSignOut={signOut}>
+    <Shell
+      route={appRoute}
+      navigate={navigate}
+      profileName={profileName}
+      clock={clock}
+      executionMode={executionMode}
+      emergencyEnabled={emergencyEnabled}
+      emergencyNotice={emergencyNotice}
+      onEmergencyStop={triggerEmergencyStop}
+      onSignOut={signOut}
+    >
       {appRoute.page === "dashboard" && <DashboardPage navigate={navigate} accountProfile={accountProfile} strategies={currentStrategies} />}
-      {appRoute.page === "market" && <MarketPage accountProfile={accountProfile} />}
+      {appRoute.page === "market" && <MarketPage accountProfile={accountProfile} orders={currentOrders} setOrders={updateCurrentOrders} />}
       {appRoute.page === "strategy" && (
         <StrategyPage
           navigate={navigate}
@@ -513,13 +627,15 @@ function App() {
           updateNickname={updateNickname}
           executionMode={executionMode}
           setExecutionMode={updateExecutionMode}
+          emergencyEnabled={emergencyEnabled}
+          setEmergencyEnabled={setEmergencyEnabled}
         />
       )}
     </Shell>
   );
 }
 
-function Shell({ children, route, navigate, profileName, clock, executionMode, onSignOut }) {
+function Shell({ children, route, navigate, profileName, clock, executionMode, emergencyEnabled, emergencyNotice, onEmergencyStop, onSignOut }) {
   const modeProfile = accountProfiles[executionMode];
   const modeTone = executionMode === "real" ? "text-tertiary" : "text-secondary";
   const modeDot = executionMode === "real" ? "bg-tertiary" : "bg-secondary";
@@ -552,10 +668,20 @@ function Shell({ children, route, navigate, profileName, clock, executionMode, o
           })}
         </nav>
         <div className="px-4 mt-auto">
-          <button className="w-full py-3 bg-error-container text-on-error-container font-title-sm text-title-sm font-bold rounded-lg hover:brightness-110 transition-all flex items-center justify-center gap-2" type="button">
+          <button
+            className="w-full py-3 bg-error-container text-on-error-container font-title-sm text-title-sm font-bold rounded-lg hover:brightness-110 transition-all flex items-center justify-center gap-2 disabled:opacity-45 disabled:hover:brightness-100"
+            disabled={!emergencyEnabled}
+            type="button"
+            onClick={onEmergencyStop}
+          >
             <Icon className="text-[20px]">warning</Icon>
             긴급 중지
           </button>
+          {emergencyNotice ? (
+            <p className="mt-3 rounded border border-error/20 bg-error/10 p-2 font-body-sm text-body-sm text-on-error-container">
+              {emergencyNotice}
+            </p>
+          ) : null}
           <div className="grid grid-cols-2 gap-2 mt-6 px-2">
             {[
               ["dns", "서버"],
@@ -749,21 +875,34 @@ function DashboardPage({ navigate, accountProfile, strategies }) {
   );
 }
 
-function MarketPage({ accountProfile }) {
+function MarketPage({ accountProfile, orders, setOrders }) {
   const [query, setQuery] = useState("");
   const [selectedCode, setSelectedCode] = useState(stocks[0].code);
   const [tab, setTab] = useState("all");
   const [groups, setGroups] = useState(initialGroups);
   const [openGroups, setOpenGroups] = useState({ "핵심 관심": true, "단기 관찰": true });
   const [pendingStock, setPendingStock] = useState(null);
-  const [orders, setOrders] = useState(initialMarketOrders);
   const [editingOrderId, setEditingOrderId] = useState(null);
 
   const selected = stocks.find((stock) => stock.code === selectedCode) || stocks[0];
   const [orderPrice, setOrderPrice] = useState(selected.current);
   const editingOrder = orders.find((order) => order.id === editingOrderId && OPEN_ORDER_STATUSES.includes(order.status)) || null;
   const favoriteCodes = useMemo(() => new Set(Object.values(groups).flat()), [groups]);
-  const filteredStocks = stocks.filter((stock) => `${stock.name} ${stock.code}`.toLowerCase().includes(query.toLowerCase()));
+  const normalizedQuery = query.trim().toLowerCase();
+  const matchesStockQuery = (stock) => `${stock.name} ${stock.code} ${stock.sector}`.toLowerCase().includes(normalizedQuery);
+  const filteredStocks = stocks.filter(matchesStockQuery);
+  const filteredFavoriteGroups = Object.entries(groups)
+    .map(([groupName, codes]) => [
+      groupName,
+      codes.filter((code) => {
+        const stock = stocks.find((item) => item.code === code);
+        return stock ? matchesStockQuery(stock) : false;
+      })
+    ])
+    .filter(([, codes]) => codes.length > 0 || !normalizedQuery);
+  const visibleStockCount = tab === "all"
+    ? filteredStocks.length
+    : filteredFavoriteGroups.reduce((count, [, codes]) => count + codes.length, 0);
 
   useEffect(() => {
     if (!editingOrderId) {
@@ -864,7 +1003,7 @@ function MarketPage({ accountProfile }) {
           <div className="p-widget-padding border-b border-outline-variant">
             <div className="flex items-center justify-between mb-3">
               <h2 className="font-headline-lg text-headline-lg text-on-surface">국내 종목 검색</h2>
-              <span className="font-label-mono text-label-mono text-secondary">{filteredStocks.length}개</span>
+              <span className="font-label-mono text-label-mono text-secondary">{visibleStockCount}개</span>
             </div>
             <div className="relative">
               <Icon className="absolute left-3 top-1/2 -translate-y-1/2 text-outline text-[20px]">search</Icon>
@@ -897,19 +1036,23 @@ function MarketPage({ accountProfile }) {
 
           <div className="section-body-scroll custom-scrollbar flex-1">
             {tab === "all" ? (
-              filteredStocks.map((stock) => (
-                <StockRow
-                  key={stock.code}
-                  stock={stock}
-                  selected={selectedCode === stock.code}
-                  favorite={favoriteCodes.has(stock.code)}
-                  onSelect={() => selectStock(stock.code)}
-                  onFavorite={() => favoriteCodes.has(stock.code) ? removeFavorite(stock.code) : setPendingStock(stock)}
-                />
-              ))
+              filteredStocks.length ? (
+                filteredStocks.map((stock) => (
+                  <StockRow
+                    key={stock.code}
+                    stock={stock}
+                    selected={selectedCode === stock.code}
+                    favorite={favoriteCodes.has(stock.code)}
+                    onSelect={() => selectStock(stock.code)}
+                    onFavorite={() => favoriteCodes.has(stock.code) ? removeFavorite(stock.code) : setPendingStock(stock)}
+                  />
+                ))
+              ) : (
+                <div className="p-widget-padding text-center font-body-md text-body-md text-on-surface-variant">검색 결과가 없습니다.</div>
+              )
             ) : (
               <div className="divide-y divide-outline-variant/40">
-                {Object.entries(groups).map(([groupName, codes]) => (
+                {filteredFavoriteGroups.map(([groupName, codes]) => (
                   <div key={groupName}>
                     <button className="w-full p-widget-padding bg-surface-container-low flex items-center justify-between" type="button" onClick={() => setOpenGroups((current) => ({ ...current, [groupName]: !current[groupName] }))}>
                       <span className="font-title-sm text-title-sm text-on-surface">{groupName}</span>
@@ -930,6 +1073,9 @@ function MarketPage({ accountProfile }) {
                     }) : null}
                   </div>
                 ))}
+                {visibleStockCount === 0 ? (
+                  <div className="p-widget-padding text-center font-body-md text-body-md text-on-surface-variant">관심 종목 검색 결과가 없습니다.</div>
+                ) : null}
               </div>
             )}
           </div>
@@ -1482,18 +1628,31 @@ function StockInfo({ selected, embedded = false }) {
 
 function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, setStrategies, sourceStrategies, sourceMode }) {
   const [selectedId, setSelectedId] = useState(strategies[0]?.id || null);
-  const [scope, setScope] = useState("개별 종목");
   const [conditionSide, setConditionSide] = useState("buy");
   const [backtestStrategy, setBacktestStrategy] = useState(strategies[0]?.id || "");
   const [importMessage, setImportMessage] = useState("");
   const [showImportPicker, setShowImportPicker] = useState(false);
   const [selectedImportId, setSelectedImportId] = useState("");
+  const [strategyQuery, setStrategyQuery] = useState("");
+  const [strategyStatusFilter, setStrategyStatusFilter] = useState("전체 상태");
   const modeLabel = accountProfiles[executionMode].shortLabel;
   const sourceModeLabel = accountProfiles[sourceMode].shortLabel;
+  const normalizedStrategyQuery = strategyQuery.trim().toLowerCase();
   const importableStrategies = useMemo(() => {
     const currentNames = new Set(strategies.map((strategy) => strategy.name));
     return sourceStrategies.filter((strategy) => !currentNames.has(strategy.name));
   }, [strategies, sourceStrategies]);
+  const filteredStrategies = useMemo(() => strategies.filter((strategy) => {
+    const matchesQuery = [
+      strategy.name,
+      strategy.description,
+      strategy.scope,
+      strategy.target,
+      strategy.orderMode
+    ].some((value) => String(value || "").toLowerCase().includes(normalizedStrategyQuery));
+    const matchesStatus = strategyStatusFilter === "전체 상태" || strategy.status === strategyStatusFilter;
+    return matchesQuery && matchesStatus;
+  }), [normalizedStrategyQuery, strategies, strategyStatusFilter]);
   const selectedImportStrategy = importableStrategies.find((strategy) => String(strategy.id) === String(selectedImportId)) || importableStrategies[0];
   const selected = strategies.find((strategy) => strategy.id === selectedId) || strategies[0];
 
@@ -1512,6 +1671,13 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
   }, [strategies, selectedId, backtestStrategy]);
 
   useEffect(() => {
+    if (!filteredStrategies.length) return;
+    if (!filteredStrategies.some((strategy) => strategy.id === selectedId)) {
+      setSelectedId(filteredStrategies[0].id);
+    }
+  }, [filteredStrategies, selectedId]);
+
+  useEffect(() => {
     if (!importableStrategies.length) {
       setSelectedImportId("");
       return;
@@ -1520,6 +1686,34 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
       setSelectedImportId(String(importableStrategies[0].id));
     }
   }, [importableStrategies, selectedImportId]);
+
+  const selectedScope = selected?.scope || "개별 종목";
+  const activeConditions = conditionSide === "buy"
+    ? selected?.buyConditions || defaultBuyConditions
+    : selected?.sellConditions || defaultSellConditions;
+
+  function updateSelectedStrategy(patch) {
+    if (!selectedId) return;
+    setStrategies((current) => current.map((strategy) => strategy.id === selectedId ? { ...strategy, ...patch } : strategy));
+  }
+
+  function updateCondition(index, field, value) {
+    if (!selectedId) return;
+    const key = conditionSide === "buy" ? "buyConditions" : "sellConditions";
+    setStrategies((current) =>
+      current.map((strategy) => {
+        if (strategy.id !== selectedId) return strategy;
+        const baseConditions = strategy[key] || (conditionSide === "buy" ? defaultBuyConditions : defaultSellConditions);
+        const nextConditions = baseConditions.map((condition, conditionIndex) => {
+          if (conditionIndex !== index) return condition;
+          const nextCondition = [...condition];
+          nextCondition[field] = value;
+          return nextCondition;
+        });
+        return { ...strategy, [key]: nextConditions };
+      })
+    );
+  }
 
   function updateStatus(status) {
     setStrategies((current) => current.map((strategy) => strategy.id === selectedId ? { ...strategy, status } : strategy));
@@ -1532,7 +1726,20 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
   }
 
   function addStrategy() {
-    const next = { ...strategiesSeed[0], id: Date.now(), name: "새 전략", status: "중지", returnRate: "0.0%", winRate: "0%", mode: executionMode };
+    const next = {
+      ...strategiesSeed[0],
+      id: Date.now(),
+      name: "새 전략",
+      status: "중지",
+      orderMode: "승인 후 주문",
+      scope: "개별 종목",
+      target: "삼성전자",
+      returnRate: "0.0%",
+      winRate: "0%",
+      mode: executionMode,
+      buyConditions: defaultBuyConditions,
+      sellConditions: defaultSellConditions
+    };
     setStrategies((current) => [next, ...current]);
     setSelectedId(next.id);
     setBacktestStrategy(next.id);
@@ -1601,14 +1808,24 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
           <div className="p-widget-padding border-b border-outline-variant">
             <div className="flex items-center justify-between mb-3">
               <h3 className="font-headline-md text-headline-md text-on-surface">전략 목록</h3>
-              <span className="font-label-mono text-label-mono text-secondary">{strategies.length}개 · {modeLabel}</span>
+              <span className="font-label-mono text-label-mono text-secondary">{filteredStrategies.length}/{strategies.length}개 · {modeLabel}</span>
             </div>
             <div className="grid grid-cols-2 gap-gutter">
               <div className="relative">
                 <Icon className="absolute left-3 top-1/2 -translate-y-1/2 text-outline text-[20px]">search</Icon>
-                <input className="w-full bg-surface-container-lowest border border-outline-variant rounded pl-10 pr-3 py-2 font-body-md text-body-md text-on-surface placeholder:text-outline" placeholder="전략 검색" type="search" />
+                <input
+                  className="w-full bg-surface-container-lowest border border-outline-variant rounded pl-10 pr-3 py-2 font-body-md text-body-md text-on-surface placeholder:text-outline"
+                  placeholder="전략 검색"
+                  type="search"
+                  value={strategyQuery}
+                  onChange={(event) => setStrategyQuery(event.target.value)}
+                />
               </div>
-              <select className="bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-body-md text-body-md text-on-surface">
+              <select
+                className="bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-body-md text-body-md text-on-surface"
+                value={strategyStatusFilter}
+                onChange={(event) => setStrategyStatusFilter(event.target.value)}
+              >
                 <option>전체 상태</option>
                 <option>활성</option>
                 <option>중지</option>
@@ -1616,7 +1833,7 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
             </div>
           </div>
           <div className="section-body-scroll flex-1 min-h-0 custom-scrollbar">
-            {strategies.map((strategy) => (
+            {filteredStrategies.map((strategy) => (
               <button
                 className={`w-full p-widget-padding border-b border-outline-variant/40 text-left hover:bg-surface-container-highest ${selectedId === strategy.id ? "bg-primary/5" : ""}`}
                 key={strategy.id}
@@ -1632,8 +1849,10 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
                 </p>
               </button>
             ))}
-            {!strategies.length ? (
-              <div className="p-widget-padding text-center font-body-md text-body-md text-on-surface-variant">등록된 전략이 없습니다.</div>
+            {!filteredStrategies.length ? (
+              <div className="p-widget-padding text-center font-body-md text-body-md text-on-surface-variant">
+                {strategies.length ? "조건에 맞는 전략이 없습니다." : "등록된 전략이 없습니다."}
+              </div>
             ) : null}
           </div>
         </Section>
@@ -1654,10 +1873,11 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
                 <button className="px-3 py-2 rounded bg-error-container text-on-error-container font-label-caps text-label-caps" type="button" onClick={deleteStrategy}>삭제</button>
               </div>
             </div>
-            <div className="p-widget-padding grid grid-cols-1 md:grid-cols-4 gap-gutter">
+            <div className="p-widget-padding grid grid-cols-1 md:grid-cols-5 gap-gutter">
               {[
                 ["적용 범위", selected?.scope],
                 ["대상", selected?.target],
+                ["주문 방식", selected?.orderMode],
                 ["최근 수익률", selected?.returnRate],
                 ["승률", selected?.winRate]
               ].map(([label, value]) => (
@@ -1675,11 +1895,20 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
               <div className="grid grid-cols-1 md:grid-cols-2 gap-gutter">
                 <label className="block">
                   <span className="font-label-caps text-label-caps text-on-surface-variant">전략 이름</span>
-                  <input className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-body-md text-body-md text-on-surface" defaultValue={selected?.name} type="text" />
+                  <input
+                    className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-body-md text-body-md text-on-surface"
+                    type="text"
+                    value={selected?.name || ""}
+                    onChange={(event) => updateSelectedStrategy({ name: event.target.value })}
+                  />
                 </label>
                 <label className="block">
                   <span className="font-label-caps text-label-caps text-on-surface-variant">주문 실행 방식</span>
-                  <select className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-body-md text-body-md text-on-surface">
+                  <select
+                    className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-body-md text-body-md text-on-surface"
+                    value={selected?.orderMode || "승인 후 주문"}
+                    onChange={(event) => updateSelectedStrategy({ orderMode: event.target.value })}
+                  >
                     <option>승인 후 주문</option>
                     <option>자동 주문</option>
                   </select>
@@ -1690,28 +1919,42 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
                 <p className="font-label-caps text-label-caps text-on-surface-variant mb-2">적용 범위</p>
                 <div className="grid grid-cols-3 gap-gutter">
                   {["개별 종목", "종목 그룹", "전체 종목"].map((item) => (
-                    <button className={`py-2 rounded border font-label-caps text-label-caps ${scope === item ? "border-primary bg-primary/10 text-primary" : "border-outline-variant text-on-surface-variant hover:bg-surface-container-highest"}`} key={item} type="button" onClick={() => setScope(item)}>
+                    <button
+                      className={`py-2 rounded border font-label-caps text-label-caps ${selectedScope === item ? "border-primary bg-primary/10 text-primary" : "border-outline-variant text-on-surface-variant hover:bg-surface-container-highest"}`}
+                      key={item}
+                      type="button"
+                      onClick={() => updateSelectedStrategy({ scope: item, target: item === "전체 종목" ? "전체 종목" : item === "종목 그룹" ? Object.keys(favoriteGroups)[0] || "관심 그룹 없음" : "삼성전자" })}
+                    >
                       {item}
                     </button>
                   ))}
                 </div>
                 <div className="mt-gutter">
-                  {scope === "개별 종목" ? (
+                  {selectedScope === "개별 종목" ? (
                     <div className="relative">
                       <Icon className="absolute left-3 top-1/2 -translate-y-1/2 text-outline text-[20px]">search</Icon>
-                      <input className="w-full bg-surface-container-lowest border border-outline-variant rounded pl-10 pr-3 py-2 font-body-md text-body-md text-on-surface" placeholder="종목명 또는 코드 검색" />
+                      <input
+                        className="w-full bg-surface-container-lowest border border-outline-variant rounded pl-10 pr-3 py-2 font-body-md text-body-md text-on-surface"
+                        placeholder="종목명 또는 코드 검색"
+                        value={selected?.target || ""}
+                        onChange={(event) => updateSelectedStrategy({ target: event.target.value })}
+                      />
                     </div>
                   ) : null}
-                  {scope === "종목 그룹" ? (
+                  {selectedScope === "종목 그룹" ? (
                     Object.keys(favoriteGroups).length ? (
-                      <select className="w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-body-md text-body-md text-on-surface">
+                      <select
+                        className="w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-body-md text-body-md text-on-surface"
+                        value={selected?.target || Object.keys(favoriteGroups)[0]}
+                        onChange={(event) => updateSelectedStrategy({ target: event.target.value })}
+                      >
                         {Object.keys(favoriteGroups).map((group) => <option key={group}>{group}</option>)}
                       </select>
                     ) : (
                       <button className="px-3 py-2 rounded bg-primary-container text-on-primary-container font-body-md text-body-md" type="button" onClick={() => navigate("market")}>관심 종목 설정으로 이동</button>
                     )
                   ) : null}
-                  {scope === "전체 종목" ? (
+                  {selectedScope === "전체 종목" ? (
                     <p className="bg-surface-container-low rounded border border-outline-variant p-3 font-body-sm text-body-sm text-on-surface-variant">조건식 입력 없이 전체 종목을 대상으로 전략을 적용합니다.</p>
                   ) : null}
                 </div>
@@ -1732,25 +1975,43 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
                   </div>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-gutter">
-                  {(conditionSide === "buy"
-                    ? [["거래량 증가율", "이상", "130"], ["RSI", "이하", "55"], ["현재가", "상향 돌파", "20일선"], ["외국인 순매수", "이상", "50억"]]
-                    : [["손절률", "이하", "-3"], ["수익률", "이상", "6"], ["RSI", "이상", "72"], ["거래량 감소율", "이상", "40"]]
-                  ).map(([indicator, operator, value]) => (
-                    <div className="grid grid-cols-3 gap-gutter bg-surface-container-low rounded border border-outline-variant p-3" key={`${conditionSide}-${indicator}`}>
-                      <select className="bg-surface-container-lowest border border-outline-variant rounded px-2 py-2 font-body-sm text-body-sm text-on-surface" defaultValue={indicator}>
+                  {activeConditions.map(([indicator, operator, value], index) => (
+                    <div className="grid grid-cols-3 gap-gutter bg-surface-container-low rounded border border-outline-variant p-3" key={`${conditionSide}-${index}`}>
+                      <select
+                        className="bg-surface-container-lowest border border-outline-variant rounded px-2 py-2 font-body-sm text-body-sm text-on-surface"
+                        value={indicator}
+                        onChange={(event) => updateCondition(index, 0, event.target.value)}
+                      >
                         <option>{indicator}</option>
                         <option>이동평균선</option>
                         <option>MACD</option>
                         <option>체결강도</option>
+                        <option>거래량 증가율</option>
+                        <option>RSI</option>
+                        <option>현재가</option>
+                        <option>외국인 순매수</option>
+                        <option>기관 순매수</option>
+                        <option>거래대금</option>
+                        <option>손절률</option>
+                        <option>수익률</option>
+                        <option>거래량 감소율</option>
                       </select>
-                      <select className="bg-surface-container-lowest border border-outline-variant rounded px-2 py-2 font-body-sm text-body-sm text-on-surface" defaultValue={operator}>
+                      <select
+                        className="bg-surface-container-lowest border border-outline-variant rounded px-2 py-2 font-body-sm text-body-sm text-on-surface"
+                        value={operator}
+                        onChange={(event) => updateCondition(index, 1, event.target.value)}
+                      >
                         <option>{operator}</option>
                         <option>이상</option>
                         <option>이하</option>
                         <option>상향 돌파</option>
                         <option>하향 이탈</option>
                       </select>
-                      <input className="bg-surface-container-lowest border border-outline-variant rounded px-2 py-2 font-label-mono text-label-mono text-right text-on-surface" defaultValue={value} />
+                      <input
+                        className="bg-surface-container-lowest border border-outline-variant rounded px-2 py-2 font-label-mono text-label-mono text-right text-on-surface"
+                        value={value}
+                        onChange={(event) => updateCondition(index, 2, event.target.value)}
+                      />
                     </div>
                   ))}
                 </div>
@@ -1889,13 +2150,59 @@ function NumberInput({ label, value, suffix }) {
 }
 
 function RecordPage() {
+  const [recordFilters, setRecordFilters] = useState({
+    startDate: "2026-06-17",
+    endDate: "2026-06-21",
+    strategy: "모든 전략",
+    type: "전체 기록",
+    status: "전체 상태"
+  });
+  const filteredRecordRows = recordRows.filter(([time, type, target, body, status]) => {
+    const date = time.slice(0, 10);
+    const matchesStart = !recordFilters.startDate || date >= recordFilters.startDate;
+    const matchesEnd = !recordFilters.endDate || date <= recordFilters.endDate;
+    const matchesStrategy = recordFilters.strategy === "모든 전략" || target === recordFilters.strategy;
+    const matchesType = recordFilters.type === "전체 기록" || type === recordFilters.type;
+    const matchesStatus = recordFilters.status === "전체 상태" || status === recordFilters.status;
+    return matchesStart && matchesEnd && matchesStrategy && matchesType && matchesStatus;
+  });
+  const completedRecordCount = filteredRecordRows.filter(([, , , , status]) => status === "완료").length;
+  const reviewRecordCount = filteredRecordRows.filter(([, , , , status]) => status !== "완료").length;
+  const updateRecordFilter = (key, value) => {
+    setRecordFilters((current) => ({ ...current, [key]: value }));
+  };
+  const escapeCsvValue = (value) => {
+    const text = String(value ?? "");
+    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  };
+
+  function exportRecordsCsv() {
+    const headers = ["시간", "구분", "대상", "내용", "상태"];
+    const rows = filteredRecordRows.map((row) => row.map(escapeCsvValue).join(","));
+    const csv = [headers.join(","), ...rows].join("\n");
+    const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `trading-records-${recordFilters.startDate || "start"}-${recordFilters.endDate || "end"}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <>
       <PageHeader
         title="기록 및 알림"
         description="거래 기록과 시스템 알림을 한 곳에서 확인합니다."
         action={
-          <button className="px-4 py-2 rounded border border-outline-variant text-on-surface-variant font-label-caps text-label-caps hover:bg-surface-container-highest transition-colors flex items-center gap-2" type="button">
+          <button
+            className="px-4 py-2 rounded border border-outline-variant text-on-surface-variant font-label-caps text-label-caps hover:bg-surface-container-highest transition-colors flex items-center gap-2 disabled:opacity-50 disabled:hover:bg-transparent"
+            disabled={!filteredRecordRows.length}
+            type="button"
+            onClick={exportRecordsCsv}
+          >
             <Icon className="text-[18px]">download</Icon>
             CSV 내보내기
           </button>
@@ -1903,16 +2210,16 @@ function RecordPage() {
       />
 
       <section className="grid grid-cols-1 md:grid-cols-5 gap-3 p-widget-padding bg-surface-container rounded-lg border border-outline-variant">
-        <FilterControl label="시작일" type="date" defaultValue="2026-06-17" />
-        <FilterControl label="종료일" type="date" defaultValue="2026-06-21" />
-        <FilterControl label="전략" options={["모든 전략", "시가 돌파 전략", "종가 회귀 전략", "수급 추적 전략"]} />
-        <FilterControl label="구분" options={["전체 기록", "주문", "전략", "리스크", "시스템"]} />
-        <FilterControl label="상태" options={["전체 상태", "완료", "대기", "중지", "확인 필요"]} />
+        <FilterControl label="시작일" type="date" value={recordFilters.startDate} onChange={(value) => updateRecordFilter("startDate", value)} />
+        <FilterControl label="종료일" type="date" value={recordFilters.endDate} onChange={(value) => updateRecordFilter("endDate", value)} />
+        <FilterControl label="전략" value={recordFilters.strategy} onChange={(value) => updateRecordFilter("strategy", value)} options={["모든 전략", "시가 돌파 전략", "종가 회귀 전략", "수급 추적 전략"]} />
+        <FilterControl label="구분" value={recordFilters.type} onChange={(value) => updateRecordFilter("type", value)} options={["전체 기록", "주문", "전략", "리스크", "시스템"]} />
+        <FilterControl label="상태" value={recordFilters.status} onChange={(value) => updateRecordFilter("status", value)} options={["전체 상태", "완료", "대기", "중지", "확인 필요"]} />
       </section>
 
       <div className="grid grid-cols-12 gap-gutter items-stretch">
         <Section className="col-span-12 lg:col-span-9 flex flex-col section-bound-tall h-full" id="records">
-          <SectionTitle icon="history" title="거래 기록" meta="필수 기록" />
+          <SectionTitle icon="history" title="거래 기록" meta={`${filteredRecordRows.length}건`} />
           <div className="divide-y divide-outline-variant/40 section-body-scroll flex-1 min-h-0 custom-scrollbar">
             <div className="hidden md:grid md:grid-cols-12 gap-3 px-widget-padding py-2 bg-surface-container-low font-label-caps text-label-caps text-outline uppercase">
               <span className="md:col-span-2">시간</span>
@@ -1921,7 +2228,7 @@ function RecordPage() {
               <span className="md:col-span-5">내용</span>
               <span className="md:col-span-2 text-right">상태</span>
             </div>
-            {recordRows.map(([time, type, target, body, status]) => (
+            {filteredRecordRows.map(([time, type, target, body, status]) => (
               <article className={`grid grid-cols-1 md:grid-cols-12 items-center gap-1 md:gap-3 px-widget-padding py-3 hover:bg-surface-container-highest transition-colors min-w-0 ${status === "중지" ? "bg-error-container/5" : ""}`} key={time}>
                 <span className="md:col-span-2 font-label-mono text-label-mono text-on-surface-variant whitespace-nowrap">{time}</span>
                 <span className="md:col-span-1 w-fit">
@@ -1932,9 +2239,12 @@ function RecordPage() {
                 <span className={`md:col-span-2 font-label-mono text-label-mono md:text-right ${status === "완료" ? "text-secondary" : status === "대기" ? "text-primary" : status === "중지" ? "text-error" : "text-tertiary"}`}>{status}</span>
               </article>
             ))}
+            {!filteredRecordRows.length ? (
+              <div className="p-widget-padding text-center font-body-md text-body-md text-on-surface-variant">조건에 맞는 기록이 없습니다.</div>
+            ) : null}
           </div>
           <div className="mt-auto p-4 border-t border-outline-variant bg-surface-container-low flex justify-between items-center">
-            <span className="font-label-mono text-label-mono text-on-surface-variant">{recordRows.length}건 표시 중</span>
+            <span className="font-label-mono text-label-mono text-on-surface-variant">{filteredRecordRows.length}건 표시 중</span>
             <span className="font-label-mono text-label-mono text-on-surface-variant">필수 기록만 표시</span>
           </div>
         </Section>
@@ -1943,13 +2253,13 @@ function RecordPage() {
           <div className="bg-surface-container border border-outline-variant rounded-lg p-widget-padding section-body-scroll flex-1 h-full custom-scrollbar">
             <h3 className="font-label-caps text-label-caps text-outline uppercase mb-4 flex items-center justify-between">
               기간 요약
-              <span className="font-label-mono text-label-mono text-secondary-container">2026-06-17 ~ 2026-06-21</span>
+              <span className="font-label-mono text-label-mono text-secondary-container">{recordFilters.startDate} ~ {recordFilters.endDate}</span>
             </h3>
             <div className="space-y-4">
               {[
-                ["총 기록 건수", "7", "필수 기록"],
-                ["완료된 기록", "4", "57%"],
-                ["확인 필요", "2", "검토"]
+                ["총 기록 건수", String(filteredRecordRows.length), "필수 기록"],
+                ["완료된 기록", String(completedRecordCount), filteredRecordRows.length ? `${Math.round((completedRecordCount / filteredRecordRows.length) * 100)}%` : "0%"],
+                ["확인 필요", String(reviewRecordCount), "검토"]
               ].map(([label, value, meta]) => (
                 <div key={label}>
                   <p className="font-body-sm text-body-sm text-on-surface-variant mb-1">{label}</p>
@@ -1986,14 +2296,23 @@ function RecordPage() {
   );
 }
 
-function FilterControl({ label, type = "select", defaultValue, options }) {
+function FilterControl({ label, type = "select", value, onChange, options = [] }) {
   return (
     <div className="flex flex-col gap-1">
       <label className="font-label-caps text-label-caps text-outline uppercase">{label}</label>
       {type === "date" ? (
-        <input className="bg-surface-container-lowest border border-outline-variant text-on-surface font-body-md text-body-md p-2 focus:ring-1 focus:ring-primary outline-none" type="date" defaultValue={defaultValue} />
+        <input
+          className="bg-surface-container-lowest border border-outline-variant text-on-surface font-body-md text-body-md p-2 focus:ring-1 focus:ring-primary outline-none"
+          type="date"
+          value={value}
+          onChange={(event) => onChange?.(event.target.value)}
+        />
       ) : (
-        <select className="bg-surface-container-lowest border border-outline-variant text-on-surface font-body-md text-body-md p-2 focus:ring-1 focus:ring-primary outline-none">
+        <select
+          className="bg-surface-container-lowest border border-outline-variant text-on-surface font-body-md text-body-md p-2 focus:ring-1 focus:ring-primary outline-none"
+          value={value}
+          onChange={(event) => onChange?.(event.target.value)}
+        >
           {options.map((option) => <option key={option}>{option}</option>)}
         </select>
       )}
@@ -2001,11 +2320,10 @@ function FilterControl({ label, type = "select", defaultValue, options }) {
   );
 }
 
-function SettingsPage({ theme, setTheme, nickname, updateNickname, executionMode, setExecutionMode }) {
+function SettingsPage({ theme, setTheme, nickname, updateNickname, executionMode, setExecutionMode, emergencyEnabled, setEmergencyEnabled }) {
   const [nicknameDraft, setNicknameDraft] = useState(nickname || "AeroTrade 사용자");
   const [passwordMessage, setPasswordMessage] = useState("보안을 위해 현재 비밀번호를 확인한 뒤 새 비밀번호로 변경합니다.");
   const [orderMode, setOrderMode] = useState("승인 후 주문");
-  const [emergencyEnabled, setEmergencyEnabled] = useState(true);
   const [pendingExecutionMode, setPendingExecutionMode] = useState(null);
   const [kiwoomCredentials, setKiwoomCredentials] = useState({
     real: { appKey: "", appSecret: "" },
