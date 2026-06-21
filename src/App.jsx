@@ -135,6 +135,7 @@ const initialGroups = {
 };
 
 const ORDERABLE_CASH = 5000000;
+const OPEN_ORDER_STATUSES = ["접수", "부분 체결"];
 
 const holdingQuantities = {
   "005930": 42,
@@ -143,6 +144,57 @@ const holdingQuantities = {
   "035720": 0,
   "373220": 5
 };
+
+const initialMarketOrders = [
+  {
+    id: 1004,
+    time: "14:58:12",
+    code: "005930",
+    name: "삼성전자",
+    side: "매수",
+    orderType: "지정가",
+    price: "84,100",
+    quantity: 20,
+    filledQuantity: 0,
+    status: "접수"
+  },
+  {
+    id: 1003,
+    time: "14:44:30",
+    code: "000660",
+    name: "SK하이닉스",
+    side: "매도",
+    orderType: "지정가",
+    price: "216,500",
+    quantity: 6,
+    filledQuantity: 2,
+    status: "부분 체결"
+  },
+  {
+    id: 1002,
+    time: "13:12:09",
+    code: "005930",
+    name: "삼성전자",
+    side: "매수",
+    orderType: "현재가",
+    price: "84,200",
+    quantity: 10,
+    filledQuantity: 10,
+    status: "체결"
+  },
+  {
+    id: 1001,
+    time: "10:22:41",
+    code: "035420",
+    name: "NAVER",
+    side: "매수",
+    orderType: "지정가",
+    price: "187,500",
+    quantity: 4,
+    filledQuantity: 0,
+    status: "취소"
+  }
+];
 
 const strategiesSeed = [
   {
@@ -571,10 +623,25 @@ function MarketPage() {
   const [groups, setGroups] = useState(initialGroups);
   const [openGroups, setOpenGroups] = useState({ "핵심 관심": true, "단기 관찰": true });
   const [pendingStock, setPendingStock] = useState(null);
+  const [orders, setOrders] = useState(initialMarketOrders);
+  const [editingOrderId, setEditingOrderId] = useState(null);
 
   const selected = stocks.find((stock) => stock.code === selectedCode) || stocks[0];
+  const [orderPrice, setOrderPrice] = useState(selected.current);
+  const editingOrder = orders.find((order) => order.id === editingOrderId && OPEN_ORDER_STATUSES.includes(order.status)) || null;
   const favoriteCodes = useMemo(() => new Set(Object.values(groups).flat()), [groups]);
   const filteredStocks = stocks.filter((stock) => `${stock.name} ${stock.code}`.toLowerCase().includes(query.toLowerCase()));
+
+  useEffect(() => {
+    if (!editingOrderId) {
+      setOrderPrice(selected.current);
+    }
+  }, [selected.code, selected.current, editingOrderId]);
+
+  function selectStock(code) {
+    setSelectedCode(code);
+    setEditingOrderId(null);
+  }
 
   function addToGroup(groupName) {
     if (!pendingStock) return;
@@ -588,6 +655,60 @@ function MarketPage() {
 
   function removeFavorite(code) {
     setGroups((current) => Object.fromEntries(Object.entries(current).map(([group, codes]) => [group, codes.filter((item) => item !== code)])));
+  }
+
+  function getOrderTime() {
+    return new Intl.DateTimeFormat("ko-KR", {
+      timeZone: "Asia/Seoul",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false
+    }).format(new Date());
+  }
+
+  function submitOrder(order) {
+    setEditingOrderId(null);
+    setOrders((current) => [
+      {
+        id: Date.now(),
+        time: getOrderTime(),
+        code: selected.code,
+        name: selected.name,
+        filledQuantity: 0,
+        status: "접수",
+        ...order
+      },
+      ...current
+    ]);
+  }
+
+  function amendOrder(orderId, nextValues) {
+    setOrders((current) =>
+      current.map((order) =>
+        order.id === orderId && OPEN_ORDER_STATUSES.includes(order.status)
+          ? { ...order, ...nextValues, time: getOrderTime() }
+          : order
+      )
+    );
+    setEditingOrderId(null);
+  }
+
+  function cancelOrder(orderId) {
+    setOrders((current) =>
+      current.map((order) =>
+        order.id === orderId && OPEN_ORDER_STATUSES.includes(order.status)
+          ? { ...order, status: "취소", time: getOrderTime() }
+          : order
+      )
+    );
+    setEditingOrderId(null);
+  }
+
+  function selectOrderForEdit(order) {
+    if (!OPEN_ORDER_STATUSES.includes(order.status)) return;
+    setSelectedCode(order.code);
+    setEditingOrderId(order.id);
   }
 
   return (
@@ -649,7 +770,7 @@ function MarketPage() {
                   stock={stock}
                   selected={selectedCode === stock.code}
                   favorite={favoriteCodes.has(stock.code)}
-                  onSelect={() => setSelectedCode(stock.code)}
+                  onSelect={() => selectStock(stock.code)}
                   onFavorite={() => favoriteCodes.has(stock.code) ? removeFavorite(stock.code) : setPendingStock(stock)}
                 />
               ))
@@ -669,7 +790,7 @@ function MarketPage() {
                           stock={stock}
                           selected={selectedCode === stock.code}
                           favorite
-                          onSelect={() => setSelectedCode(stock.code)}
+                          onSelect={() => selectStock(stock.code)}
                           onFavorite={() => removeFavorite(stock.code)}
                         />
                       ) : null;
@@ -697,18 +818,71 @@ function MarketPage() {
                 <p className={`font-title-sm text-title-sm ${selected.change.startsWith("+") ? "text-secondary" : "text-tertiary"}`}>{selected.change}</p>
               </div>
             </div>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-gutter p-widget-padding">
-              <IntradayChart />
-              <OrderBook current={selected.current} />
+            <div className="grid grid-cols-1 xl:grid-cols-12 gap-gutter p-widget-padding items-start">
+              <div className="xl:col-span-6 h-full">
+                <IntradayChart />
+              </div>
+              <div className="xl:col-span-6 flex flex-col gap-gutter">
+                <OrderBook current={selected.current} selectedPrice={orderPrice} onSelectPrice={setOrderPrice} />
+              </div>
             </div>
           </Section>
 
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-gutter items-stretch">
-            <div className="lg:col-span-8 flex h-full flex-col gap-gutter">
-              <Section>
-                <div className="p-widget-padding">
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-gutter items-stretch">
+            <Section className="section-scroll-tall min-h-[430px] flex flex-col xl:col-span-6">
+              <SectionTitle icon="analytics" title="종목 분석" meta="자동 요약" />
+              <div className="p-widget-padding flex flex-1 flex-col gap-gutter">
+                <div className="grid grid-cols-3 gap-gutter">
+                  {[
+                    ["추세", "상승", "secondary"],
+                    ["수급", "개선", "primary"],
+                    ["위험", "보통", "tertiary"]
+                  ].map(([label, value, tone]) => (
+                    <div className="bg-surface-container-low rounded border border-outline-variant p-3" key={label}>
+                      <p className="font-label-caps text-label-caps text-on-surface-variant">{label}</p>
+                      <p className={`font-title-sm text-title-sm mt-1 ${tone === "secondary" ? "text-secondary" : tone === "primary" ? "text-primary" : "text-tertiary"}`}>{value}</p>
+                    </div>
+                  ))}
+                </div>
+                <div className="bg-surface-container-low rounded border border-outline-variant p-4 flex min-h-[160px] flex-1 flex-col">
+                  <h4 className="font-title-sm text-title-sm text-on-surface mb-2">분석 요약</h4>
+                  <p className="font-body-md text-body-md text-on-surface-variant">{selected.summary}</p>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-gutter">
+                  {["거래대금이 최근 평균 대비 높습니다.", "전략 적용 전 손절 기준을 확인하세요.", "장중 변동성 확대 시 분할 주문이 적합합니다.", "관심 그룹에 포함하면 전략 범위에서 선택할 수 있습니다."].map((text) => (
+                    <div className="flex items-start gap-2 bg-surface-container-low rounded border border-outline-variant p-3" key={text}>
+                      <Icon className="text-secondary text-[18px] mt-0.5">check_circle</Icon>
+                      <p className="font-body-sm text-body-sm text-on-surface-variant">{text}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </Section>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-gutter items-stretch xl:col-span-6">
+              <OrderPanel
+                selected={selected}
+                orderPrice={orderPrice}
+                setOrderPrice={setOrderPrice}
+                editingOrder={editingOrder}
+                onSubmitOrder={submitOrder}
+                onAmendOrder={amendOrder}
+                onCancelOrder={cancelOrder}
+                onClearEditing={() => setEditingOrderId(null)}
+              />
+              <OrderStatusPanel
+                orders={orders}
+                selectedOrderId={editingOrderId}
+                onSelectOrder={selectOrderForEdit}
+              />
+            </div>
+          </div>
+
+          <Section>
+            <div className="grid grid-cols-1 lg:grid-cols-12">
+              <div className="lg:col-span-8 p-widget-padding">
                   <h3 className="font-headline-md text-headline-md text-on-surface mb-3">주요 지표</h3>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-gutter">
+                  <div className="grid grid-cols-2 gap-gutter md:grid-cols-4">
                     {[
                       ["PER", selected.per],
                       ["PBR", selected.pbr],
@@ -725,45 +899,13 @@ function MarketPage() {
                       </div>
                     ))}
                   </div>
-                </div>
-              </Section>
+              </div>
 
-              <Section className="section-scroll-tall min-h-[620px] flex flex-1 flex-col">
-                <SectionTitle icon="analytics" title="종목 분석" meta="자동 요약" />
-                <div className="p-widget-padding flex flex-1 flex-col gap-gutter">
-                  <div className="grid grid-cols-3 gap-gutter">
-                    {[
-                      ["추세", "상승", "secondary"],
-                      ["수급", "개선", "primary"],
-                      ["위험", "보통", "tertiary"]
-                    ].map(([label, value, tone]) => (
-                      <div className="bg-surface-container-low rounded border border-outline-variant p-3" key={label}>
-                        <p className="font-label-caps text-label-caps text-on-surface-variant">{label}</p>
-                        <p className={`font-title-sm text-title-sm mt-1 ${tone === "secondary" ? "text-secondary" : tone === "primary" ? "text-primary" : "text-tertiary"}`}>{value}</p>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="bg-surface-container-low rounded border border-outline-variant p-4 flex min-h-[240px] flex-1 flex-col">
-                    <h4 className="font-title-sm text-title-sm text-on-surface mb-2">분석 요약</h4>
-                    <p className="font-body-md text-body-md text-on-surface-variant">{selected.summary}</p>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-gutter">
-                    {["거래대금이 최근 평균 대비 높습니다.", "전략 적용 전 손절 기준을 확인하세요.", "장중 변동성 확대 시 분할 주문이 적합합니다.", "관심 그룹에 포함하면 전략 범위에서 선택할 수 있습니다."].map((text) => (
-                      <div className="flex items-start gap-2 bg-surface-container-low rounded border border-outline-variant p-3" key={text}>
-                        <Icon className="text-secondary text-[18px] mt-0.5">check_circle</Icon>
-                        <p className="font-body-sm text-body-sm text-on-surface-variant">{text}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </Section>
+              <div className="lg:col-span-4 border-t border-outline-variant lg:border-l lg:border-t-0">
+                <StockInfo selected={selected} embedded />
+              </div>
             </div>
-
-            <div className="lg:col-span-4 flex h-full flex-col gap-gutter">
-              <OrderPanel selected={selected} />
-              <StockInfo selected={selected} />
-            </div>
-          </div>
+          </Section>
         </div>
       </div>
 
@@ -811,11 +953,11 @@ function StockRow({ stock, selected, favorite, onSelect, onFavorite }) {
 }
 
 function IntradayChart() {
-  const bars = [34, 42, 38, 54, 49, 63, 58, 72, 69, 78, 74, 86, 80, 92, 88, 95];
+  const bars = [34, 42, 38, 54, 49, 63, 58, 72, 69, 78, 74, 86, 80, 92, 88, 95, 89, 93, 91, 96, 94, 98, 92, 97];
   return (
-    <div>
+    <div className="flex h-full flex-col">
       <h3 className="font-headline-md text-headline-md text-on-surface mb-3">일중 그래프</h3>
-      <div className="h-[220px] bg-surface-container-low rounded border border-outline-variant p-3 flex items-end gap-1">
+      <div className="h-[430px] bg-surface-container-low rounded border border-outline-variant p-3 flex items-end gap-1">
         {bars.map((bar, index) => (
           <div className={`flex-1 rounded-t ${index % 5 === 2 ? "chart-bar-down" : "chart-bar-up"}`} style={{ height: `${bar}%` }} key={bar + index} />
         ))}
@@ -824,41 +966,159 @@ function IntradayChart() {
   );
 }
 
-function OrderBook({ current }) {
-  const asks = ["84,500", "84,400", "84,300"];
-  const bids = ["84,100", "84,000", "83,900"];
+function OrderBook({ current, selectedPrice, onSelectPrice }) {
+  const currentNumber = Number(String(current).replace(/,/g, "")) || 0;
+  const formatPrice = (value) => value.toLocaleString("ko-KR");
+  const orderBookDepth = 6;
+  const depthSteps = Array.from({ length: orderBookDepth }, (_, index) => index + 1);
+  const asks = [...depthSteps].reverse().map((step) => formatPrice(currentNumber + step * 100));
+  const bids = depthSteps.map((step) => formatPrice(Math.max(currentNumber - step * 100, 0)));
+  const renderPriceRow = (side, price, volume, index) => {
+    const active = selectedPrice === price;
+    const sideClass = side === "ask" ? "orderbook-ask" : "orderbook-bid";
+    return (
+      <button
+        className={`grid flex-1 grid-cols-2 items-center gap-2 px-2 py-1.5 text-left transition-colors hover:bg-surface-container-highest ${sideClass} ${active ? "ring-1 ring-primary" : ""}`}
+        key={`${side}-${price}`}
+        type="button"
+        onClick={() => onSelectPrice(price)}
+      >
+        <strong className="font-label-mono text-label-mono">{price}</strong>
+        <span className="text-right font-label-mono text-label-mono">{volume.toLocaleString()}</span>
+      </button>
+    );
+  };
+
   return (
-    <div>
-      <h3 className="font-headline-md text-headline-md text-on-surface mb-3">호가</h3>
-      <div className="rounded border border-outline-variant overflow-hidden">
-        {asks.map((price, index) => (
-          <div className="grid grid-cols-3 gap-2 p-2 orderbook-ask" key={price}>
-            <span>매도</span>
-            <strong className="text-right">{price}</strong>
-            <span className="text-right">{(3200 - index * 410).toLocaleString()}</span>
-          </div>
-        ))}
-        <div className="grid grid-cols-3 gap-2 p-2 bg-surface-container-high text-on-surface font-title-sm text-title-sm">
-          <span>현재가</span>
-          <strong className="text-right">{current}</strong>
-          <span className="text-right">기준</span>
-        </div>
-        {bids.map((price, index) => (
-          <div className="grid grid-cols-3 gap-2 p-2 orderbook-bid" key={price}>
-            <span>매수</span>
-            <strong className="text-right">{price}</strong>
-            <span className="text-right">{(2800 + index * 530).toLocaleString()}</span>
-          </div>
-        ))}
+    <div className="flex h-full flex-col">
+      <div className="mb-3 flex items-center justify-between">
+        <h3 className="font-headline-md text-headline-md text-on-surface">호가</h3>
+        <span className="font-label-mono text-label-mono text-on-surface-variant">가격 클릭 시 주문가 반영</span>
+      </div>
+      <div className="h-[430px] rounded border border-outline-variant overflow-hidden flex flex-col">
+        {asks.map((price, index) => renderPriceRow("ask", price, 4200 - index * 310, index))}
+        <button
+          className={`grid flex-1 grid-cols-2 items-center gap-2 px-2 py-1.5 bg-surface-container-high text-on-surface font-title-sm text-title-sm transition-colors hover:bg-surface-container-highest ${selectedPrice === current ? "ring-1 ring-primary" : ""}`}
+          type="button"
+          onClick={() => onSelectPrice(current)}
+        >
+          <strong>{current}</strong>
+          <span className="text-right font-label-mono text-label-mono">현재가</span>
+        </button>
+        {bids.map((price, index) => renderPriceRow("bid", price, 3100 + index * 430, index))}
       </div>
     </div>
   );
 }
 
-function OrderPanel({ selected }) {
+function OrderStatusPanel({ orders, selectedOrderId, onSelectOrder }) {
+  const [filter, setFilter] = useState("open");
+  const filteredOrders = orders.filter((order) => {
+    if (filter === "open") return OPEN_ORDER_STATUSES.includes(order.status);
+    return ["체결", "취소"].includes(order.status);
+  });
+  const openCount = orders.filter((order) => OPEN_ORDER_STATUSES.includes(order.status)).length;
+  const filledCount = orders.filter((order) => ["체결", "취소"].includes(order.status)).length;
+
+  function statusTone(status) {
+    if (status === "체결") return "secondary";
+    if (status === "부분 체결") return "tertiary";
+    if (status === "취소") return "neutral";
+    return "primary";
+  }
+
+  return (
+    <Section className="min-h-[430px] flex h-full flex-col">
+      <div className="p-widget-padding border-b border-outline-variant flex flex-col gap-3">
+        <div className="flex items-center gap-2">
+          <Icon className="text-primary">receipt_long</Icon>
+          <h3 className="font-headline-md text-headline-md text-on-surface">주문 현황</h3>
+        </div>
+        <div className="grid grid-cols-2 gap-gutter">
+          {[
+            ["open", `미체결 ${openCount}`],
+            ["done", `체결 ${filledCount}`]
+          ].map(([key, label]) => (
+            <button
+              className={`py-2 rounded border font-label-caps text-label-caps ${
+                filter === key ? "border-primary bg-primary/10 text-primary" : "border-outline-variant text-on-surface-variant hover:bg-surface-container-highest"
+              }`}
+              key={key}
+              type="button"
+              onClick={() => setFilter(key)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="section-body-scroll custom-scrollbar flex-1 min-h-0">
+        <div className="divide-y divide-outline-variant/40">
+          {filteredOrders.map((order) => {
+            const editable = OPEN_ORDER_STATUSES.includes(order.status);
+            const active = selectedOrderId === order.id;
+            return (
+              <button
+                aria-disabled={!editable}
+                className={`w-full px-widget-padding py-3 text-left transition-colors ${
+                  editable ? "hover:bg-surface-container-highest" : "cursor-default"
+                } ${active ? "bg-primary/10 ring-1 ring-inset ring-primary" : ""}`}
+                key={order.id}
+                type="button"
+                onClick={() => {
+                  if (editable) onSelectOrder(order);
+                }}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-title-sm text-title-sm text-on-surface truncate">{order.name}</p>
+                      <span className="font-label-mono text-label-mono text-on-surface-variant">{order.code}</span>
+                    </div>
+                    <p className={`font-label-caps text-label-caps mt-1 ${order.side === "매수" ? "text-secondary" : "text-tertiary"}`}>
+                      {order.side} · {order.orderType}
+                    </p>
+                  </div>
+                  <Badge tone={statusTone(order.status)}>{order.status}</Badge>
+                </div>
+                <div className="grid grid-cols-3 gap-2 mt-3">
+                  <div className="bg-surface-container-low rounded border border-outline-variant p-2">
+                    <span className="block font-label-caps text-label-caps text-on-surface-variant">가격</span>
+                    <span className="block font-label-mono text-label-mono text-on-surface mt-1">{order.price}</span>
+                  </div>
+                  <div className="bg-surface-container-low rounded border border-outline-variant p-2">
+                    <span className="block font-label-caps text-label-caps text-on-surface-variant">수량</span>
+                    <span className="block font-label-mono text-label-mono text-on-surface mt-1">{order.quantity}</span>
+                  </div>
+                  <div className="bg-surface-container-low rounded border border-outline-variant p-2">
+                    <span className="block font-label-caps text-label-caps text-on-surface-variant">체결</span>
+                    <span className="block font-label-mono text-label-mono text-on-surface mt-1">{order.filledQuantity}</span>
+                  </div>
+                </div>
+                <div className="mt-3 flex items-center justify-between gap-2">
+                  <span className="font-label-mono text-label-mono text-on-surface-variant">{order.time}</span>
+                  <span className="font-body-sm text-body-sm text-on-surface-variant">
+                    {editable ? (active ? "주문창에서 정정 중" : "클릭하면 주문창에서 정정/취소") : "처리 완료"}
+                  </span>
+                </div>
+              </button>
+            );
+          })}
+          {filteredOrders.length === 0 ? (
+            <div className="p-widget-padding text-center font-body-md text-body-md text-on-surface-variant">표시할 주문이 없습니다.</div>
+          ) : null}
+        </div>
+      </div>
+    </Section>
+  );
+}
+
+function OrderPanel({ selected, orderPrice, setOrderPrice, editingOrder, onSubmitOrder, onAmendOrder, onCancelOrder, onClearEditing }) {
   const [orderSide, setOrderSide] = useState("buy");
+  const [orderType, setOrderType] = useState("지정가");
   const [quantity, setQuantity] = useState("10");
-  const currentPrice = Number(String(selected.current).replace(/,/g, "")) || 0;
+  const isEditing = Boolean(editingOrder);
+  const currentPrice = Number(String(orderPrice || selected.current).replace(/,/g, "")) || 0;
   const maxBuyQuantity = currentPrice ? Math.floor(ORDERABLE_CASH / currentPrice) : 0;
   const holdingQuantity = holdingQuantities[selected.code] || 0;
   const holdingValue = holdingQuantity * currentPrice;
@@ -866,13 +1126,62 @@ function OrderPanel({ selected }) {
   const isBuy = orderSide === "buy";
 
   useEffect(() => {
-    setQuantity(String(Math.min(10, Math.max(limitQuantity, 0))));
-  }, [selected.code, orderSide, limitQuantity]);
+    if (!editingOrder) {
+      setQuantity(String(Math.min(10, Math.max(limitQuantity, 0))));
+    }
+  }, [selected.code, orderSide, limitQuantity, editingOrder]);
+
+  useEffect(() => {
+    if (!editingOrder) return;
+    setOrderSide(editingOrder.side === "매수" ? "buy" : "sell");
+    setOrderType(editingOrder.orderType);
+    setOrderPrice(editingOrder.price);
+    setQuantity(String(editingOrder.quantity));
+  }, [editingOrder, setOrderPrice]);
+
+  const numericQuantity = Number(quantity) || 0;
+  const minimumQuantity = editingOrder?.filledQuantity || 0;
+  const canSubmit = numericQuantity > 0 && numericQuantity <= limitQuantity && numericQuantity >= minimumQuantity;
+
+  function submitOrder() {
+    if (!canSubmit) return;
+    const nextOrder = {
+      orderType,
+      price: orderPrice || selected.current,
+      quantity: numericQuantity
+    };
+
+    if (editingOrder) {
+      onAmendOrder(editingOrder.id, nextOrder);
+      return;
+    }
+
+    onSubmitOrder({
+      side: isBuy ? "매수" : "매도",
+      ...nextOrder
+    });
+  }
 
   return (
-    <Section className="shrink-0">
+    <Section className="min-h-[430px] shrink-0">
       <div className="p-widget-padding">
-        <h3 className="font-headline-md text-headline-md text-on-surface mb-4">주문</h3>
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h3 className="font-headline-md text-headline-md text-on-surface">{isEditing ? "주문 정정" : "주문"}</h3>
+          {isEditing ? (
+            <button className="rounded border border-outline-variant px-3 py-1.5 font-label-caps text-label-caps text-on-surface-variant hover:bg-surface-container-highest" type="button" onClick={onClearEditing}>
+              새 주문
+            </button>
+          ) : null}
+        </div>
+        {isEditing ? (
+          <div className="mb-gutter rounded-lg border border-primary/40 bg-primary/10 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <span className="font-title-sm text-title-sm text-primary">{editingOrder.name} 정정 중</span>
+              <span className="font-label-mono text-label-mono text-on-surface-variant">체결 {editingOrder.filledQuantity}/{editingOrder.quantity}</span>
+            </div>
+            <p className="mt-2 font-body-sm text-body-sm text-on-surface-variant">가격과 수량을 수정하거나 주문을 취소할 수 있습니다.</p>
+          </div>
+        ) : null}
         <div className="grid grid-cols-2 gap-gutter mb-gutter">
           {[
             ["buy", "매수", "add_shopping_cart", "최대 매수 가능", `${maxBuyQuantity.toLocaleString()}주`],
@@ -882,6 +1191,7 @@ function OrderPanel({ selected }) {
             const buySide = side === "buy";
             return (
               <button
+                aria-disabled={isEditing}
                 aria-pressed={active}
                 className={`min-h-[82px] rounded-lg border p-3 text-left transition-all ${
                   active
@@ -889,10 +1199,12 @@ function OrderPanel({ selected }) {
                       ? "border-secondary bg-secondary/10 text-secondary shadow-[inset_0_0_0_1px_rgb(var(--secondary-rgb)/0.3)]"
                       : "border-tertiary bg-tertiary/10 text-tertiary shadow-[inset_0_0_0_1px_rgb(var(--tertiary-rgb)/0.3)]"
                     : "border-outline-variant bg-surface-container-low text-on-surface-variant hover:bg-surface-container-highest"
-                }`}
+                } ${isEditing && !active ? "opacity-50 hover:bg-surface-container-low" : ""}`}
                 key={side}
                 type="button"
-                onClick={() => setOrderSide(side)}
+                onClick={() => {
+                  if (!isEditing) setOrderSide(side);
+                }}
               >
                 <span className="flex items-center justify-between gap-2">
                   <span className="flex items-center gap-2 font-title-sm text-title-sm">
@@ -909,7 +1221,7 @@ function OrderPanel({ selected }) {
         </div>
         <div className={`rounded-lg border p-3 mb-gutter ${isBuy ? "border-secondary/50 bg-secondary/10" : "border-tertiary/50 bg-tertiary/10"}`}>
           <div className="flex items-center justify-between gap-3">
-            <span className={`font-title-sm text-title-sm ${isBuy ? "text-secondary" : "text-tertiary"}`}>현재 선택: {isBuy ? "매수" : "매도"}</span>
+            <span className={`font-title-sm text-title-sm ${isBuy ? "text-secondary" : "text-tertiary"}`}>{isEditing ? "정정 대상" : "현재 선택"}: {isBuy ? "매수" : "매도"}</span>
             <span className="font-label-mono text-label-mono text-on-surface">{selected.name}</span>
           </div>
           <div className="grid grid-cols-2 gap-gutter mt-3">
@@ -929,11 +1241,18 @@ function OrderPanel({ selected }) {
           {!isBuy && holdingQuantity === 0 ? (
             <p className="font-body-sm text-body-sm text-error mt-3">보유 수량이 없어 매도 주문을 진행할 수 없습니다.</p>
           ) : null}
+          {isEditing && minimumQuantity > 0 ? (
+            <p className="font-body-sm text-body-sm text-on-surface-variant mt-3">부분 체결된 수량보다 낮게 줄일 수 없습니다.</p>
+          ) : null}
         </div>
         <div className="space-y-3">
           <label className="block">
             <span className="font-label-caps text-label-caps text-on-surface-variant">주문 방식</span>
-            <select className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-body-md text-body-md text-on-surface">
+            <select
+              className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-body-md text-body-md text-on-surface"
+              value={orderType}
+              onChange={(event) => setOrderType(event.target.value)}
+            >
               <option>지정가</option>
               <option>시장가</option>
               <option>현재가</option>
@@ -941,7 +1260,13 @@ function OrderPanel({ selected }) {
           </label>
           <label className="block">
             <span className="font-label-caps text-label-caps text-on-surface-variant">가격</span>
-            <input className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-label-mono text-label-mono text-right text-on-surface" value={selected.current} readOnly />
+            <input
+              className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-label-mono text-label-mono text-right text-on-surface"
+              inputMode="numeric"
+              type="text"
+              value={orderPrice}
+              onChange={(event) => setOrderPrice(event.target.value.replace(/[^\d,]/g, ""))}
+            />
           </label>
           <label className="block">
             <span className="font-label-caps text-label-caps text-on-surface-variant">수량</span>
@@ -957,24 +1282,41 @@ function OrderPanel({ selected }) {
           </label>
           <button
             className={`w-full py-2 rounded font-label-caps text-label-caps hover:brightness-110 disabled:opacity-50 disabled:hover:brightness-100 ${
-              isBuy ? "bg-secondary-container text-on-secondary-container" : "bg-tertiary-container text-on-tertiary-container"
+              isEditing ? "bg-primary-container text-on-primary-container" : isBuy ? "bg-secondary-container text-on-secondary-container" : "bg-tertiary-container text-on-tertiary-container"
             }`}
-            disabled={limitQuantity <= 0}
+            disabled={!canSubmit}
             type="button"
+            onClick={submitOrder}
           >
-            {isBuy ? "매수 주문 확인" : "매도 주문 확인"}
+            {isEditing ? "정정 적용" : isBuy ? "매수 주문 확인" : "매도 주문 확인"}
           </button>
+          {isEditing ? (
+            <button
+              className="w-full rounded border border-error/40 py-2 font-label-caps text-label-caps text-error hover:bg-error/10"
+              type="button"
+              onClick={() => onCancelOrder(editingOrder.id)}
+            >
+              주문 취소
+            </button>
+          ) : null}
         </div>
       </div>
     </Section>
   );
 }
 
-function StockInfo({ selected }) {
-  return (
-    <Section className="section-scroll-sm flex-1">
-      <SectionTitle icon="info" title="종목 정보" meta={selected.market} />
-      <div className="p-widget-padding space-y-3">
+function StockInfo({ selected, embedded = false }) {
+  const content = (
+    <>
+      {embedded ? (
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h3 className="font-headline-md text-headline-md text-on-surface">종목 정보</h3>
+          <span className="font-label-caps text-label-caps text-primary">{selected.market}</span>
+        </div>
+      ) : (
+        <SectionTitle icon="info" title="종목 정보" meta={selected.market} />
+      )}
+      <div className={`${embedded ? "space-y-2" : "p-widget-padding space-y-3"}`}>
         {[
           ["업종", selected.sector],
           ["시가총액", selected.marketCap],
@@ -989,6 +1331,16 @@ function StockInfo({ selected }) {
           </div>
         ))}
       </div>
+    </>
+  );
+
+  if (embedded) {
+    return <div className="p-widget-padding">{content}</div>;
+  }
+
+  return (
+    <Section className="section-scroll-sm h-full w-full">
+      {content}
     </Section>
   );
 }
