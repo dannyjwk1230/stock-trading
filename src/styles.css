@@ -8,11 +8,251 @@ body {
   overflow-x: hidden;
 }
 
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 button,
 input,
 select,
 textarea {
   font: inherit;
+}
+
+.custom-scrollbar :where(section, article, header, main, aside, nav, div),
+.custom-scrollbar :where(.flex > *, .grid > *) {
+  min-width: 0;
+}
+
+.custom-scrollbar :where(p, li) {
+  overflow-wrap: anywhere;
+}
+
+.custom-scrollbar :where(h1, h2, h3, h4, h5, h6, span, strong, small, label, a, button):not(.material-symbols-outlined) {
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.custom-scrollbar :where(img, svg, canvas, video) {
+  max-width: 100%;
+}
+
+.custom-scrollbar :where(.overflow-x-auto) {
+  max-width: 100%;
+}
+
+.custom-scrollbar :where(table) {
+  min-width: 720px;
+  width: 100%;
+}
+
+@media (max-width: 720px) {
+  .custom-scrollbar :where(.grid-cols-12, .grid-cols-4, .grid-cols-3) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 560px) {
+  .custom-scrollbar :where(.grid-cols-2) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.app-wordmark {
+  max-width: 100%;
+  font-size: 32px;
+  line-height: 40px;
+  overflow-wrap: normal !important;
+  text-wrap: nowrap;
+  white-space: nowrap;
+  word-break: keep-all;
+}
+
+.app-brand-meta {
+  overflow-wrap: normal !important;
+  text-wrap: nowrap;
+  white-space: nowrap;
+}
+
+.app-header {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.app-header :where(span, button, input) {
+  overflow-wrap: normal !important;
+}
+
+.app-header-status {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.app-header-status > * {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-header-actions {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.app-pin-form {
+  flex: 0 0 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.app-pin-input {
+  flex: 0 0 58px;
+  min-width: 58px;
+  text-align: center;
+  width: auto;
+}
+
+.app-pin-submit {
+  flex: 0 0 auto;
+  min-width: 38px;
+  line-height: 18px;
+  overflow-wrap: normal !important;
+  white-space: nowrap;
+  word-break: keep-all;
+}
+
+.app-pin-status {
+  flex: 0 0 58px;
+  min-width: 0 !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.app-profile-name {
+  max-width: 128px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-logout-label,
+.app-mode-label,
+.app-header-market,
+.app-header-clock {
+  white-space: nowrap;
+}
+
+@media (max-width: 1280px) {
+  .app-header-status,
+  .app-header-actions {
+    gap: 8px;
+  }
+
+  .app-header-clock {
+    display: none;
+  }
+}
+
+@media (max-width: 1120px) {
+  .app-header-market,
+  .app-pin-status {
+    display: none;
+  }
+
+  .app-pin-form {
+    flex-basis: auto;
+    min-width: 0;
+  }
+
+  .app-profile-name {
+    max-width: 88px;
+  }
+}
+
+@media (max-width: 960px) {
+  .app-profile-name,
+  .app-logout-label {
+    display: none;
+  }
+
+  .app-header-status {
+    max-width: 156px;
+  }
+}
+
+@media (max-width: 820px) {
+  .app-header-status {
+    display: none;
+  }
+
+  .app-pin-form {
+    flex-basis: auto;
+    min-width: 0;
+  }
+
+  .app-pin-input {
+    flex-basis: 48px;
+    min-width: 48px;
+  }
+}
+
+@media (max-width: 560px) {
+  .app-header-actions {
+    gap: 6px;
+  }
+
+  .app-pin-form {
+    flex-basis: auto;
+    min-width: 0;
+    gap: 4px;
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+
+  .app-pin-input {
+    flex-basis: 42px;
+    min-width: 42px;
+  }
+
+  .app-profile-button,
+  .app-signout-button {
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+
+  .app-pin-submit {
+    min-width: 34px;
+    padding-left: 4px;
+    padding-right: 4px;
+  }
+}
+
+@media (max-width: 520px) {
+  .app-profile-button {
+    display: none;
+  }
+}
+
+@media (max-width: 460px) {
+  .app-notification-button {
+    display: none;
+  }
+
+  .app-pin-form {
+    flex-basis: auto;
+    min-width: 0;
+  }
+
+  .app-pin-form > span:first-child {
+    display: none;
+  }
 }
 
 .material-symbols-outlined {

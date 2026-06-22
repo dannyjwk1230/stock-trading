@@ -6,8 +6,7 @@ const PIN_KEY = "aerotrade.pin";
 const EXECUTION_MODE_KEY = "aerotrade.executionMode";
 const AUTH_SESSION_KEY = "aerotrade.authSession";
 const FAVORITE_GROUPS_KEY = "aerotrade.favoriteGroups";
-const PIN_UNLOCK_DURATION_MS = 5 * 60 * 1000;
-const PIN_REQUIRED_MESSAGE = "PIN 입력 필요";
+const PIN_UNLOCK_DURATION_MS = 10 * 60 * 1000;
 
 const PinAuthContext = createContext({
   pinUnlocked: false,
@@ -152,7 +151,6 @@ const initialGroups = {
   "단기 관찰": ["035420", "373220"]
 };
 
-const ORDERABLE_CASH = 5000000;
 const OPEN_ORDER_STATUSES = ["접수", "부분 체결"];
 
 const holdingQuantities = {
@@ -835,19 +833,20 @@ function App() {
 
 function Shell({ children, route, navigate, profileName, clock, executionMode, emergencyEnabled, emergencyNotice, onEmergencyStop, onSignOut }) {
   const modeProfile = accountProfiles[executionMode];
-  const modeTone = executionMode === "real" ? "text-tertiary" : "text-secondary";
-  const modeDot = executionMode === "real" ? "bg-tertiary" : "bg-secondary";
   const [pinInput, setPinInput] = useState("");
   const [pinUnlockedUntil, setPinUnlockedUntil] = useState(0);
   const [pinNow, setPinNow] = useState(Date.now());
   const [pinMessage, setPinMessage] = useState("");
   const [pinMessageTone, setPinMessageTone] = useState("");
+  const [pinDialogOpen, setPinDialogOpen] = useState(false);
+  const [pinDialogInput, setPinDialogInput] = useState("");
+  const [pinDialogMessage, setPinDialogMessage] = useState("");
   const pinInputRef = useRef(null);
+  const pinDialogInputRef = useRef(null);
   const pinMessageTimerRef = useRef(null);
   const pinRemainingMs = Math.max(0, pinUnlockedUntil - pinNow);
   const pinUnlocked = pinRemainingMs > 0;
   const pinHasError = pinMessageTone === "error";
-  const pinHasNotice = pinMessageTone === "notice";
   const pinStatus = pinUnlocked
     ? formatPinRemaining(pinRemainingMs)
     : pinUnlockedUntil
@@ -862,16 +861,29 @@ function Shell({ children, route, navigate, profileName, clock, executionMode, e
     };
   }, []);
 
+  useEffect(() => {
+    if (!pinDialogOpen) return undefined;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const focusTimer = window.setTimeout(() => pinDialogInputRef.current?.focus(), 0);
+
+    return () => {
+      window.clearTimeout(focusTimer);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [pinDialogOpen]);
+
   function clearPinMessageTimer() {
     if (!pinMessageTimerRef.current) return;
     window.clearTimeout(pinMessageTimerRef.current);
     pinMessageTimerRef.current = null;
   }
 
-  function showTemporaryPinMessage(message, tone) {
+  function showTemporaryPinError(message) {
     clearPinMessageTimer();
     setPinMessage(message);
-    setPinMessageTone(tone);
+    setPinMessageTone("error");
 
     if (pinUnlocked) {
       pinMessageTimerRef.current = window.setTimeout(() => {
@@ -882,17 +894,16 @@ function Shell({ children, route, navigate, profileName, clock, executionMode, e
     }
   }
 
-  function verifyTopbarPin(nextPin) {
+  function unlockPin(nextPin, onError) {
     if (!/^\d{4}$/.test(nextPin)) {
-      showTemporaryPinMessage("숫자 4자리", "error");
-      return;
+      onError("숫자 4자리");
+      return false;
     }
 
     const savedPin = localStorage.getItem(PIN_KEY);
     if (savedPin && savedPin !== nextPin) {
-      showTemporaryPinMessage("불일치", "error");
-      setPinInput("");
-      return;
+      onError("불일치");
+      return false;
     }
 
     if (!savedPin) localStorage.setItem(PIN_KEY, nextPin);
@@ -903,6 +914,15 @@ function Shell({ children, route, navigate, profileName, clock, executionMode, e
     setPinInput("");
     setPinMessage("");
     setPinMessageTone("");
+    setPinDialogOpen(false);
+    setPinDialogInput("");
+    setPinDialogMessage("");
+    return true;
+  }
+
+  function verifyTopbarPin(nextPin) {
+    const accepted = unlockPin(nextPin, showTemporaryPinError);
+    if (!accepted && /^\d{4}$/.test(nextPin)) setPinInput("");
   }
 
   function updateTopbarPin(nextPin) {
@@ -918,12 +938,36 @@ function Shell({ children, route, navigate, profileName, clock, executionMode, e
     verifyTopbarPin(pinInput);
   }
 
+  function updatePinDialogInput(nextPin) {
+    setPinDialogInput(nextPin.replace(/\D/g, "").slice(0, 4));
+    setPinDialogMessage("");
+  }
+
+  function closePinDialog() {
+    setPinDialogOpen(false);
+    setPinDialogInput("");
+    setPinDialogMessage("");
+  }
+
+  function submitPinDialog(event) {
+    event.preventDefault();
+    const accepted = unlockPin(pinDialogInput, (message) => {
+      setPinDialogMessage(message === "불일치" ? "PIN이 일치하지 않습니다." : message);
+    });
+
+    if (!accepted && /^\d{4}$/.test(pinDialogInput)) {
+      setPinDialogInput("");
+      window.setTimeout(() => pinDialogInputRef.current?.focus(), 0);
+    }
+  }
+
   function requirePin() {
     if (pinUnlocked) return true;
     clearPinMessageTimer();
-    setPinMessage(PIN_REQUIRED_MESSAGE);
-    setPinMessageTone("notice");
-    window.setTimeout(() => pinInputRef.current?.focus(), 0);
+    setPinMessage("");
+    setPinMessageTone("");
+    setPinDialogMessage("");
+    setPinDialogOpen(true);
     return false;
   }
 
@@ -935,10 +979,83 @@ function Shell({ children, route, navigate, profileName, clock, executionMode, e
   return (
     <PinAuthContext.Provider value={{ pinUnlocked, requirePin }}>
     <div className="custom-scrollbar font-body-md text-body-md">
+      {pinDialogOpen ? (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 px-4"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closePinDialog();
+          }}
+        >
+          <form
+            aria-describedby="pin-auth-description"
+            aria-labelledby="pin-auth-title"
+            aria-modal="true"
+            className="w-full max-w-sm rounded-lg border border-outline-variant bg-surface-container p-widget-padding shadow-2xl"
+            role="dialog"
+            onSubmit={submitPinDialog}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <Icon className="text-primary">lock</Icon>
+                <h2 className="font-headline-md text-headline-md text-on-surface" id="pin-auth-title">PIN 입력 필요</h2>
+              </div>
+              <button
+                aria-label="닫기"
+                className="inline-flex h-7 w-7 items-center justify-center rounded text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface"
+                type="button"
+                onClick={closePinDialog}
+              >
+                <Icon className="text-[18px]">close</Icon>
+              </button>
+            </div>
+            <p className="mt-2 font-body-sm text-body-sm text-on-surface-variant" id="pin-auth-description">
+              보호된 작업을 계속하려면 PIN 4자리를 입력하세요.
+            </p>
+            <label className="mt-5 block font-label-caps text-label-caps text-on-surface-variant" htmlFor="pin-dialog-input">
+              PIN 번호
+            </label>
+            <input
+              ref={pinDialogInputRef}
+              className="mt-2 w-full rounded border border-outline-variant bg-surface-container-lowest px-3 py-2 font-title-sm text-title-sm text-on-surface placeholder:text-outline focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+              id="pin-dialog-input"
+              inputMode="numeric"
+              maxLength={4}
+              pattern="[0-9]{4}"
+              placeholder="4자리"
+              type="password"
+              value={pinDialogInput}
+              onChange={(event) => updatePinDialogInput(event.target.value)}
+              autoComplete="off"
+            />
+            {pinDialogMessage ? (
+              <p className="mt-3 rounded border border-error/30 bg-error/10 p-2 font-body-sm text-body-sm text-error" role="alert">
+                {pinDialogMessage}
+              </p>
+            ) : null}
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                className="rounded border border-outline-variant px-3 py-2 font-label-caps text-label-caps text-on-surface-variant hover:bg-surface-container-highest"
+                type="button"
+                onClick={closePinDialog}
+              >
+                취소
+              </button>
+              <button
+                className="rounded bg-primary px-4 py-2 font-label-caps text-label-caps text-on-primary transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
+                disabled={pinDialogInput.length !== 4}
+                type="submit"
+              >
+                인증
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
       <aside className="flex flex-col h-screen fixed left-0 top-0 py-container-margin border-r border-outline-variant bg-surface-container-low w-64 z-50">
         <div className="px-6 mb-8">
-          <h1 className="font-display text-display text-primary uppercase">AeroTrade</h1>
-          <p className="font-label-caps text-label-caps text-on-surface-variant opacity-70">Institutional Grade</p>
+          <h1 className="app-wordmark font-display text-display text-primary uppercase">AeroTrade</h1>
+          <p className="app-brand-meta font-label-caps text-label-caps text-on-surface-variant opacity-70">Institutional Grade</p>
         </div>
         <nav className="flex-1 px-4 space-y-1">
           {navItems.map((item) => {
@@ -991,33 +1108,31 @@ function Shell({ children, route, navigate, profileName, clock, executionMode, e
         </div>
       </aside>
 
-      <header className="flex justify-between items-center h-12 px-container-margin ml-64 w-[calc(100%-16rem)] bg-surface-container border-b border-outline-variant fixed top-0 z-40">
-        <div className="flex items-center gap-6">
+      <header className="app-header flex justify-between items-center h-12 px-container-margin ml-64 w-[calc(100%-16rem)] bg-surface-container border-b border-outline-variant fixed top-0 z-40">
+        <div className="app-header-status flex items-center gap-6">
           <div className="flex items-center gap-2">
-            <span className={`w-2 h-2 rounded-full ${modeDot} animate-pulse`} />
-            <span className={`font-label-mono text-label-mono ${modeTone}`}>{modeProfile.label}</span>
+            <span className="w-2 h-2 rounded-full bg-secondary animate-pulse" />
+            <span className="app-mode-label font-label-mono text-label-mono text-secondary" title={modeProfile.label}>{modeProfile.label}</span>
           </div>
-          <span className="font-label-mono text-label-mono text-on-surface-variant">한국장: 장중</span>
-          <span className="font-label-mono text-label-mono text-on-surface-variant">{clock}</span>
+          <span className="app-header-market font-label-mono text-label-mono text-on-surface-variant">한국장: 장중</span>
+          <span className="app-header-clock font-label-mono text-label-mono text-on-surface-variant">{clock}</span>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="app-header-actions flex items-center gap-3">
           <form
-            className={`flex h-8 items-center gap-2 rounded border px-2 transition-colors ${
+            className={`app-pin-form flex h-8 items-center gap-2 rounded border px-2 transition-colors ${
               pinHasError
                 ? "border-error/40 bg-error/10"
-                : pinHasNotice
-                ? "border-primary/40 bg-primary/10"
                 : pinUnlocked
                 ? "border-secondary/50 bg-secondary/10"
                 : "border-outline-variant bg-surface-container-lowest"
             }`}
             onSubmit={submitTopbarPin}
           >
-            <span className={`font-label-caps text-label-caps ${pinHasError ? "text-error" : pinHasNotice ? "text-primary" : pinUnlocked ? "text-secondary" : "text-on-surface-variant"}`}>PIN</span>
+            <span className={`font-label-caps text-label-caps ${pinHasError ? "text-error" : pinUnlocked ? "text-secondary" : "text-on-surface-variant"}`}>PIN</span>
             <input
               ref={pinInputRef}
               aria-label="핀번호"
-              className="w-24 appearance-none border-0 bg-transparent p-0 font-label-mono text-label-mono text-on-surface placeholder:text-outline shadow-none outline-none focus:border-transparent focus:outline-none focus:ring-0"
+              className="app-pin-input w-24 appearance-none border-0 bg-transparent p-0 font-label-mono text-label-mono text-on-surface placeholder:text-outline shadow-none outline-none focus:border-transparent focus:outline-none focus:ring-0"
               inputMode="numeric"
               maxLength={4}
               pattern="[0-9]{4}"
@@ -1029,18 +1144,18 @@ function Shell({ children, route, navigate, profileName, clock, executionMode, e
               style={{ boxShadow: "none" }}
             />
             <button
-              className="rounded bg-surface-container-highest px-2 py-1 font-label-caps text-label-caps text-on-surface-variant transition-colors hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+              className="app-pin-submit rounded bg-surface-container-highest px-2 py-1 font-label-caps text-label-caps text-on-surface-variant transition-colors hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
               disabled={pinInput.length !== 4}
               type="submit"
             >
               {pinUnlocked ? "연장" : "확인"}
             </button>
-            <span className={`min-w-[76px] text-right font-label-mono text-label-mono ${pinHasError ? "text-error" : pinHasNotice ? "text-primary" : pinUnlocked ? "text-secondary" : "text-on-surface-variant"}`}>
+            <span className={`app-pin-status min-w-[76px] font-label-mono text-label-mono ${pinHasError ? "text-error" : pinUnlocked ? "text-secondary" : "text-on-surface-variant"}`}>
               {pinMessage || pinStatus}
             </span>
           </form>
           <button
-            className="inline-flex items-center justify-center p-1 text-on-surface-variant hover:text-primary transition-opacity"
+            className="app-notification-button inline-flex items-center justify-center p-1 text-on-surface-variant hover:text-primary transition-opacity"
             type="button"
             aria-label="알림 보기"
             onClick={() => navigate("record", "alerts")}
@@ -1048,22 +1163,22 @@ function Shell({ children, route, navigate, profileName, clock, executionMode, e
             <Icon>notifications</Icon>
           </button>
           <button
-            className="flex items-center gap-2 px-2 py-1 rounded hover:bg-surface-container-highest cursor-pointer transition-colors"
+            className="app-profile-button flex items-center gap-2 px-2 py-1 rounded hover:bg-surface-container-highest cursor-pointer transition-colors"
             type="button"
             onClick={() => navigate("setting", "profile-security")}
           >
-            <span className="font-label-mono text-label-mono text-on-surface-variant">{profileName}</span>
+            <span className="app-profile-name font-label-mono text-label-mono text-on-surface-variant">{profileName}</span>
             <div className="w-6 h-6 rounded-full bg-primary-container flex items-center justify-center">
               <Icon className="text-[16px] text-on-primary-container">person</Icon>
             </div>
           </button>
           <button
-            className="inline-flex items-center gap-1 rounded border border-outline-variant px-2 py-1 font-label-caps text-label-caps text-on-surface-variant hover:bg-surface-container-highest"
+            className="app-signout-button inline-flex items-center gap-1 rounded border border-outline-variant px-2 py-1 font-label-caps text-label-caps text-on-surface-variant hover:bg-surface-container-highest"
             type="button"
             onClick={onSignOut}
           >
             <Icon className="text-[16px]">logout</Icon>
-            로그아웃
+            <span className="app-logout-label">로그아웃</span>
           </button>
         </div>
       </header>
@@ -3456,14 +3571,14 @@ function RecordPage() {
               <span className="md:col-span-2 text-right">상태</span>
             </div>
             {filteredRecordRows.map(([time, type, target, body, status]) => (
-              <article className={`grid grid-cols-1 md:grid-cols-12 items-center gap-1 md:gap-3 px-widget-padding py-3 hover:bg-surface-container-highest transition-colors min-w-0 ${status === "중지" ? "bg-error-container/5" : ""}`} key={time}>
-                <span className="md:col-span-2 font-label-mono text-label-mono text-on-surface-variant whitespace-nowrap">{time}</span>
+              <article className={`grid grid-cols-1 md:grid-cols-12 items-center gap-1 md:gap-3 px-widget-padding py-3 hover:bg-surface-container-highest transition-colors min-w-0 overflow-hidden ${status === "중지" ? "bg-error-container/5" : ""}`} key={time}>
+                <span className="md:col-span-2 min-w-0 truncate font-label-mono text-label-mono text-on-surface-variant" title={time}>{time}</span>
                 <span className="md:col-span-1 w-fit">
                   <Badge tone={type === "리스크" ? "error" : type === "주문" ? "secondary" : type === "시스템" ? "neutral" : "primary"}>{type}</Badge>
                 </span>
-                <span className="md:col-span-2 font-title-sm text-title-sm text-on-surface truncate min-w-0">{target}</span>
-                <span className={`md:col-span-5 font-body-md text-body-md truncate min-w-0 ${status === "중지" ? "text-error" : "text-on-surface-variant"}`}>{body}</span>
-                <span className={`md:col-span-2 font-label-mono text-label-mono md:text-right ${status === "완료" ? "text-secondary" : status === "대기" ? "text-primary" : status === "중지" ? "text-error" : "text-tertiary"}`}>{status}</span>
+                <span className="md:col-span-2 min-w-0 truncate font-title-sm text-title-sm text-on-surface" title={target}>{target}</span>
+                <span className={`md:col-span-5 min-w-0 truncate font-body-md text-body-md ${status === "중지" ? "text-error" : "text-on-surface-variant"}`} title={body}>{body}</span>
+                <span className={`md:col-span-2 min-w-0 truncate font-label-mono text-label-mono md:text-right ${status === "완료" ? "text-secondary" : status === "대기" ? "text-primary" : status === "중지" ? "text-error" : "text-tertiary"}`} title={status}>{status}</span>
               </article>
             ))}
             {!filteredRecordRows.length ? (
