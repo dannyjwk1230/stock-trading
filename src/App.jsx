@@ -1,10 +1,22 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 const THEME_KEY = "aerotrade.theme";
 const NICKNAME_KEY = "aerotrade.nickname";
+const PIN_KEY = "aerotrade.pin";
 const EXECUTION_MODE_KEY = "aerotrade.executionMode";
 const AUTH_SESSION_KEY = "aerotrade.authSession";
 const FAVORITE_GROUPS_KEY = "aerotrade.favoriteGroups";
+const PIN_UNLOCK_DURATION_MS = 5 * 60 * 1000;
+const PIN_REQUIRED_MESSAGE = "PIN 입력 필요";
+
+const PinAuthContext = createContext({
+  pinUnlocked: false,
+  requirePin: () => false
+});
+
+function usePinAuth() {
+  return useContext(PinAuthContext);
+}
 
 const validPages = ["dashboard", "market", "strategy", "backtest", "record", "setting", "login"];
 
@@ -705,6 +717,10 @@ function App() {
     if (cleanName) localStorage.setItem(NICKNAME_KEY, cleanName);
   }
 
+  function updatePin(nextPin) {
+    if (/^\d{4}$/.test(nextPin)) localStorage.setItem(PIN_KEY, nextPin);
+  }
+
   function updateExecutionMode(nextMode) {
     setExecutionModeState(nextMode);
     localStorage.setItem(EXECUTION_MODE_KEY, nextMode);
@@ -763,7 +779,7 @@ function App() {
   const appRoute = isAuthenticated && route.page === "login" ? { page: "dashboard", anchor: "" } : route;
 
   if (!isAuthenticated) {
-    return <LoginPage onSignIn={signIn} updateNickname={updateNickname} />;
+    return <LoginPage onSignIn={signIn} updateNickname={updateNickname} savePin={updatePin} />;
   }
 
   return (
@@ -821,8 +837,103 @@ function Shell({ children, route, navigate, profileName, clock, executionMode, e
   const modeProfile = accountProfiles[executionMode];
   const modeTone = executionMode === "real" ? "text-tertiary" : "text-secondary";
   const modeDot = executionMode === "real" ? "bg-tertiary" : "bg-secondary";
+  const [pinInput, setPinInput] = useState("");
+  const [pinUnlockedUntil, setPinUnlockedUntil] = useState(0);
+  const [pinNow, setPinNow] = useState(Date.now());
+  const [pinMessage, setPinMessage] = useState("");
+  const [pinMessageTone, setPinMessageTone] = useState("");
+  const pinInputRef = useRef(null);
+  const pinMessageTimerRef = useRef(null);
+  const pinRemainingMs = Math.max(0, pinUnlockedUntil - pinNow);
+  const pinUnlocked = pinRemainingMs > 0;
+  const pinHasError = pinMessageTone === "error";
+  const pinHasNotice = pinMessageTone === "notice";
+  const pinStatus = pinUnlocked
+    ? formatPinRemaining(pinRemainingMs)
+    : pinUnlockedUntil
+      ? "재입력"
+      : "";
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setPinNow(Date.now()), 1000);
+    return () => {
+      window.clearInterval(timer);
+      if (pinMessageTimerRef.current) window.clearTimeout(pinMessageTimerRef.current);
+    };
+  }, []);
+
+  function clearPinMessageTimer() {
+    if (!pinMessageTimerRef.current) return;
+    window.clearTimeout(pinMessageTimerRef.current);
+    pinMessageTimerRef.current = null;
+  }
+
+  function showTemporaryPinMessage(message, tone) {
+    clearPinMessageTimer();
+    setPinMessage(message);
+    setPinMessageTone(tone);
+
+    if (pinUnlocked) {
+      pinMessageTimerRef.current = window.setTimeout(() => {
+        setPinMessage("");
+        setPinMessageTone("");
+        pinMessageTimerRef.current = null;
+      }, 3000);
+    }
+  }
+
+  function verifyTopbarPin(nextPin) {
+    if (!/^\d{4}$/.test(nextPin)) {
+      showTemporaryPinMessage("숫자 4자리", "error");
+      return;
+    }
+
+    const savedPin = localStorage.getItem(PIN_KEY);
+    if (savedPin && savedPin !== nextPin) {
+      showTemporaryPinMessage("불일치", "error");
+      setPinInput("");
+      return;
+    }
+
+    if (!savedPin) localStorage.setItem(PIN_KEY, nextPin);
+
+    const nextUnlockUntil = Date.now() + PIN_UNLOCK_DURATION_MS;
+    setPinUnlockedUntil(nextUnlockUntil);
+    setPinNow(Date.now());
+    setPinInput("");
+    setPinMessage("");
+    setPinMessageTone("");
+  }
+
+  function updateTopbarPin(nextPin) {
+    const cleanPin = nextPin.replace(/\D/g, "").slice(0, 4);
+    setPinInput(cleanPin);
+    clearPinMessageTimer();
+    setPinMessage("");
+    setPinMessageTone("");
+  }
+
+  function submitTopbarPin(event) {
+    event.preventDefault();
+    verifyTopbarPin(pinInput);
+  }
+
+  function requirePin() {
+    if (pinUnlocked) return true;
+    clearPinMessageTimer();
+    setPinMessage(PIN_REQUIRED_MESSAGE);
+    setPinMessageTone("notice");
+    window.setTimeout(() => pinInputRef.current?.focus(), 0);
+    return false;
+  }
+
+  function handleEmergencyStop() {
+    if (!requirePin()) return;
+    onEmergencyStop();
+  }
 
   return (
+    <PinAuthContext.Provider value={{ pinUnlocked, requirePin }}>
     <div className="custom-scrollbar font-body-md text-body-md">
       <aside className="flex flex-col h-screen fixed left-0 top-0 py-container-margin border-r border-outline-variant bg-surface-container-low w-64 z-50">
         <div className="px-6 mb-8">
@@ -854,7 +965,7 @@ function Shell({ children, route, navigate, profileName, clock, executionMode, e
             className="w-full py-3 bg-error-container text-on-error-container font-title-sm text-title-sm font-bold rounded-lg hover:brightness-110 transition-all flex items-center justify-center gap-2 disabled:opacity-45 disabled:hover:brightness-100"
             disabled={!emergencyEnabled}
             type="button"
-            onClick={onEmergencyStop}
+            onClick={handleEmergencyStop}
           >
             <Icon className="text-[20px]">warning</Icon>
             긴급 중지
@@ -889,7 +1000,45 @@ function Shell({ children, route, navigate, profileName, clock, executionMode, e
           <span className="font-label-mono text-label-mono text-on-surface-variant">한국장: 장중</span>
           <span className="font-label-mono text-label-mono text-on-surface-variant">{clock}</span>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
+          <form
+            className={`flex h-8 items-center gap-2 rounded border px-2 transition-colors ${
+              pinHasError
+                ? "border-error/40 bg-error/10"
+                : pinHasNotice
+                ? "border-primary/40 bg-primary/10"
+                : pinUnlocked
+                ? "border-secondary/50 bg-secondary/10"
+                : "border-outline-variant bg-surface-container-lowest"
+            }`}
+            onSubmit={submitTopbarPin}
+          >
+            <span className={`font-label-caps text-label-caps ${pinHasError ? "text-error" : pinHasNotice ? "text-primary" : pinUnlocked ? "text-secondary" : "text-on-surface-variant"}`}>PIN</span>
+            <input
+              ref={pinInputRef}
+              aria-label="핀번호"
+              className="w-24 appearance-none border-0 bg-transparent p-0 font-label-mono text-label-mono text-on-surface placeholder:text-outline shadow-none outline-none focus:border-transparent focus:outline-none focus:ring-0"
+              inputMode="numeric"
+              maxLength={4}
+              pattern="[0-9]{4}"
+              placeholder="4자리"
+              type="password"
+              value={pinInput}
+              onChange={(event) => updateTopbarPin(event.target.value)}
+              autoComplete="off"
+              style={{ boxShadow: "none" }}
+            />
+            <button
+              className="rounded bg-surface-container-highest px-2 py-1 font-label-caps text-label-caps text-on-surface-variant transition-colors hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+              disabled={pinInput.length !== 4}
+              type="submit"
+            >
+              {pinUnlocked ? "연장" : "확인"}
+            </button>
+            <span className={`min-w-[76px] text-right font-label-mono text-label-mono ${pinHasError ? "text-error" : pinHasNotice ? "text-primary" : pinUnlocked ? "text-secondary" : "text-on-surface-variant"}`}>
+              {pinMessage || pinStatus}
+            </span>
+          </form>
           <button
             className="inline-flex items-center justify-center p-1 text-on-surface-variant hover:text-primary transition-opacity"
             type="button"
@@ -923,6 +1072,7 @@ function Shell({ children, route, navigate, profileName, clock, executionMode, e
         <div className="max-w-[1600px] mx-auto space-y-gutter">{children}</div>
       </main>
     </div>
+    </PinAuthContext.Provider>
   );
 }
 
@@ -1058,6 +1208,7 @@ function DashboardPage({ navigate, accountProfile, strategies }) {
 }
 
 function MarketPage({ accountProfile, orders, setOrders, favoriteGroups, setFavoriteGroups }) {
+  const { requirePin } = usePinAuth();
   const [query, setQuery] = useState("");
   const [selectedCode, setSelectedCode] = useState(stocks[0].code);
   const [tab, setTab] = useState("all");
@@ -1216,6 +1367,7 @@ function MarketPage({ accountProfile, orders, setOrders, favoriteGroups, setFavo
   }
 
   function submitOrder(order) {
+    if (!requirePin()) return;
     setEditingOrderId(null);
     setOrders((current) => [
       {
@@ -1232,6 +1384,7 @@ function MarketPage({ accountProfile, orders, setOrders, favoriteGroups, setFavo
   }
 
   function amendOrder(orderId, nextValues) {
+    if (!requirePin()) return;
     setOrders((current) =>
       current.map((order) =>
         order.id === orderId && OPEN_ORDER_STATUSES.includes(order.status)
@@ -1243,6 +1396,7 @@ function MarketPage({ accountProfile, orders, setOrders, favoriteGroups, setFavo
   }
 
   function cancelOrder(orderId) {
+    if (!requirePin()) return;
     setOrders((current) =>
       current.map((order) =>
         order.id === orderId && OPEN_ORDER_STATUSES.includes(order.status)
@@ -1966,6 +2120,7 @@ function StockInfo({ selected, embedded = false }) {
 }
 
 function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, setStrategies, sourceStrategies, sourceMode }) {
+  const { requirePin } = usePinAuth();
   const [selectedId, setSelectedId] = useState(strategies[0]?.id || null);
   const [conditionSide, setConditionSide] = useState("buy");
   const [importMessage, setImportMessage] = useState("");
@@ -2251,6 +2406,7 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
 
   function saveSelectedStrategySettings() {
     if (!selectedId || !selectedDraft) return;
+    if (!requirePin()) return;
     const savedBuyStages = normalizeDraftStages(selectedDraft, "buy");
     const savedSellStages = normalizeDraftStages(selectedDraft, "sell");
     const savedTargetStocks = selectedDraft.scope === "개별 종목" ? [...new Set((selectedDraft.targetStocks || []).filter((code) => getStockByCode(code)))] : [];
@@ -2288,10 +2444,12 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
   }
 
   function updateStatus(status) {
+    if (!requirePin()) return;
     setStrategies((current) => current.map((strategy) => strategy.id === selectedId ? { ...strategy, status } : strategy));
   }
 
   function deleteStrategy() {
+    if (!requirePin()) return;
     const nextStrategies = strategies.filter((strategy) => strategy.id !== selectedId);
     setStrategies(nextStrategies);
     setSelectedId(nextStrategies[0]?.id || null);
@@ -3757,18 +3915,67 @@ function SettingsPage({ theme, setTheme, nickname, updateNickname, executionMode
   );
 }
 
-function PasswordField({ label, placeholder }) {
+function PasswordField({ label, placeholder, value, onChange, autoComplete }) {
   return (
     <label className="block">
       <span className="font-label-caps text-label-caps text-on-surface-variant">{label}</span>
-      <input className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-label-mono text-label-mono text-on-surface" type="password" placeholder={placeholder} />
+      <input
+        className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-label-mono text-label-mono text-on-surface"
+        type="password"
+        placeholder={placeholder}
+        value={value}
+        onChange={onChange}
+        autoComplete={autoComplete}
+      />
     </label>
   );
 }
 
-function LoginPage({ onSignIn, updateNickname }) {
+function formatPinRemaining(milliseconds) {
+  const totalSeconds = Math.max(0, Math.ceil(milliseconds / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = String(totalSeconds % 60).padStart(2, "0");
+  return `${minutes}:${seconds}`;
+}
+
+function LoginPage({ onSignIn, updateNickname, savePin }) {
   const [mode, setMode] = useState("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [passwordConfirm, setPasswordConfirm] = useState("");
   const [nickname, setNickname] = useState("");
+  const [pin, setPin] = useState("");
+  const [formMessage, setFormMessage] = useState("");
+
+  function selectMode(nextMode) {
+    setMode(nextMode);
+    setFormMessage("");
+  }
+
+  function updatePinInput(nextPin) {
+    setPin(nextPin.replace(/\D/g, "").slice(0, 4));
+  }
+
+  function submitAuth() {
+    setFormMessage("");
+
+    if (mode === "signup") {
+      if (password !== passwordConfirm) {
+        setFormMessage("두 비밀번호가 서로 다릅니다.");
+        return;
+      }
+
+      if (pin.length !== 4) {
+        setFormMessage("핀번호는 숫자 4자리로 입력하세요.");
+        return;
+      }
+
+      if (nickname.trim()) updateNickname(nickname);
+      savePin(pin);
+    }
+
+    onSignIn();
+  }
 
   return (
     <main className="min-h-screen bg-surface-container-lowest flex items-center justify-center p-6 font-body-md text-body-md">
@@ -3779,37 +3986,68 @@ function LoginPage({ onSignIn, updateNickname }) {
         </div>
         <div className="p-6 space-y-5">
           <div className="grid grid-cols-2 gap-gutter">
-            <button className={`py-2 rounded border font-label-caps text-label-caps ${mode === "login" ? "border-primary bg-primary/10 text-primary" : "border-outline-variant text-on-surface-variant"}`} type="button" onClick={() => setMode("login")}>로그인</button>
-            <button className={`py-2 rounded border font-label-caps text-label-caps ${mode === "signup" ? "border-primary bg-primary/10 text-primary" : "border-outline-variant text-on-surface-variant"}`} type="button" onClick={() => setMode("signup")}>회원가입</button>
+            <button className={`py-2 rounded border font-label-caps text-label-caps ${mode === "login" ? "border-primary bg-primary/10 text-primary" : "border-outline-variant text-on-surface-variant"}`} type="button" onClick={() => selectMode("login")}>로그인</button>
+            <button className={`py-2 rounded border font-label-caps text-label-caps ${mode === "signup" ? "border-primary bg-primary/10 text-primary" : "border-outline-variant text-on-surface-variant"}`} type="button" onClick={() => selectMode("signup")}>회원가입</button>
           </div>
-
-          {mode === "signup" ? (
-            <label className="block">
-              <span className="font-label-caps text-label-caps text-on-surface-variant">닉네임</span>
-              <input className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-body-md text-body-md text-on-surface" placeholder="상단바에 표시할 이름" value={nickname} onChange={(event) => setNickname(event.target.value)} />
-            </label>
-          ) : null}
 
           <label className="block">
             <span className="font-label-caps text-label-caps text-on-surface-variant">이메일</span>
-            <input className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-body-md text-body-md text-on-surface" placeholder="you@example.com" type="email" />
+            <input
+              className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-body-md text-body-md text-on-surface"
+              placeholder="you@example.com"
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              autoComplete="email"
+            />
           </label>
-          <PasswordField label="비밀번호" placeholder="비밀번호" />
+          <PasswordField label="비밀번호" placeholder="비밀번호" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={mode === "signup" ? "new-password" : "current-password"} />
+
+          {mode === "signup" ? (
+            <>
+              <PasswordField label="비밀번호 확인" placeholder="다시 입력" value={passwordConfirm} onChange={(event) => setPasswordConfirm(event.target.value)} autoComplete="new-password" />
+              <label className="block">
+                <span className="font-label-caps text-label-caps text-on-surface-variant">닉네임</span>
+                <input
+                  className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-body-md text-body-md text-on-surface"
+                  placeholder="상단바에 표시할 이름"
+                  value={nickname}
+                  onChange={(event) => setNickname(event.target.value)}
+                  maxLength={20}
+                  autoComplete="nickname"
+                />
+              </label>
+              <label className="block">
+                <span className="font-label-caps text-label-caps text-on-surface-variant">핀번호</span>
+                <input
+                  className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-label-mono text-label-mono text-on-surface"
+                  placeholder="숫자 4자리"
+                  value={pin}
+                  onChange={(event) => updatePinInput(event.target.value)}
+                  inputMode="numeric"
+                  pattern="[0-9]{4}"
+                  maxLength={4}
+                  autoComplete="off"
+                />
+              </label>
+            </>
+          ) : null}
+
+          {formMessage ? <p className="font-body-sm text-body-sm text-error">{formMessage}</p> : null}
 
           <button
             className="w-full py-3 rounded bg-primary-container text-on-primary-container font-title-sm text-title-sm font-bold hover:brightness-110"
             type="button"
-            onClick={() => {
-              if (mode === "signup" && nickname.trim()) updateNickname(nickname);
-              onSignIn();
-            }}
+            onClick={submitAuth}
           >
             {mode === "signup" ? "회원가입" : "로그인"}
           </button>
 
-          <button className="w-full text-center font-body-sm text-body-sm text-on-surface-variant hover:text-primary" type="button" onClick={() => setMode("reset")}>
-            비밀번호를 잊으셨나요?
-          </button>
+          {mode === "login" ? (
+            <button className="w-full text-center font-body-sm text-body-sm text-on-surface-variant hover:text-primary" type="button" onClick={() => selectMode("reset")}>
+              비밀번호를 잊으셨나요?
+            </button>
+          ) : null}
 
           {mode === "reset" ? (
             <div className="bg-surface-container-low rounded border border-outline-variant p-4">
