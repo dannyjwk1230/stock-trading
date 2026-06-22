@@ -4,6 +4,7 @@ const THEME_KEY = "aerotrade.theme";
 const NICKNAME_KEY = "aerotrade.nickname";
 const EXECUTION_MODE_KEY = "aerotrade.executionMode";
 const AUTH_SESSION_KEY = "aerotrade.authSession";
+const FAVORITE_GROUPS_KEY = "aerotrade.favoriteGroups";
 
 const navItems = [
   { page: "dashboard", label: "대시보드", icon: "dashboard" },
@@ -154,10 +155,10 @@ const accountProfiles = {
     orderableCash: 5000000,
     holdings: holdingQuantities,
     dashboardCards: [
-      ["총 평가금액", "124,820,000원", "+1.82%", "secondary"],
-      ["당일 실현손익", "+842,000원", "체결 반영", "secondary"],
-      ["보유 종목", "8개", "KOSPI 중심", "primary"],
-      ["위험 노출", "낮음", "한도 38%", "tertiary"]
+      ["총 자산", "124,820,000원", "+1.82%", "secondary"],
+      ["오늘 실현손익", "+842,000원", "체결 반영", "secondary"],
+      ["주문 가능 현금", "5,000,000원", "즉시 주문", "primary"],
+      ["주식 평가액", "119,820,000원", "8개 종목", "secondary"]
     ],
     riskBars: [
       ["일중 손실 한도", "38%", "bg-secondary"],
@@ -177,10 +178,10 @@ const accountProfiles = {
       "373220": 10
     },
     dashboardCards: [
-      ["총 평가금액", "52,430,000원", "+4.36%", "secondary"],
-      ["당일 실현손익", "+214,000원", "모의 체결", "secondary"],
-      ["보유 종목", "12개", "테스트 포트폴리오", "primary"],
-      ["위험 노출", "보통", "한도 57%", "tertiary"]
+      ["총 자산", "52,430,000원", "+4.36%", "secondary"],
+      ["오늘 실현손익", "+214,000원", "모의 체결", "secondary"],
+      ["주문 가능 현금", "20,000,000원", "즉시 주문", "primary"],
+      ["주식 평가액", "32,430,000원", "12개 종목", "secondary"]
     ],
     riskBars: [
       ["일중 손실 한도", "57%", "bg-tertiary"],
@@ -397,6 +398,27 @@ function getInitialAuthSession() {
   }
 }
 
+function getInitialFavoriteGroups() {
+  try {
+    const saved = localStorage.getItem(FAVORITE_GROUPS_KEY);
+    if (!saved) return initialGroups;
+
+    const parsed = JSON.parse(saved);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return initialGroups;
+
+    return Object.fromEntries(
+      Object.entries(parsed)
+        .filter(([groupName, codes]) => groupName.trim() && Array.isArray(codes))
+        .map(([groupName, codes]) => [
+          groupName,
+          codes.filter((code) => typeof code === "string" && stocks.some((stock) => stock.code === code))
+        ])
+    );
+  } catch {
+    return initialGroups;
+  }
+}
+
 function readRoute() {
   const raw = window.location.hash.replace("#", "") || "dashboard";
   const [page, anchor] = raw.split(":");
@@ -459,6 +481,36 @@ function getKoreanOrderTime() {
   }).format(new Date());
 }
 
+function formatKoreanDate(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function shiftDateString(dateString, days) {
+  const [year, month, day] = dateString.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function getInitialBacktestDates() {
+  const todayDate = formatKoreanDate();
+  const minStartDate = shiftDateString(todayDate, -90);
+  return {
+    startDate: minStartDate,
+    endDate: todayDate,
+    minStartDate,
+    maxEndDate: todayDate,
+    warning: ""
+  };
+}
+
 function App() {
   const [route, setRoute] = useState(readRoute);
   const [theme, setThemeState] = useState(getInitialTheme);
@@ -466,6 +518,7 @@ function App() {
   const [executionMode, setExecutionModeState] = useState(getInitialExecutionMode);
   const [strategiesByMode, setStrategiesByMode] = useState(strategiesByModeSeed);
   const [ordersByMode, setOrdersByMode] = useState(marketOrdersByModeSeed);
+  const [favoriteGroups, setFavoriteGroups] = useState(getInitialFavoriteGroups);
   const [emergencyEnabled, setEmergencyEnabled] = useState(true);
   const [emergencyNotice, setEmergencyNotice] = useState("");
   const [isAuthenticated, setIsAuthenticated] = useState(getInitialAuthSession);
@@ -485,6 +538,10 @@ function App() {
     root.style.colorScheme = theme;
     localStorage.setItem(THEME_KEY, theme);
   }, [theme]);
+
+  useEffect(() => {
+    localStorage.setItem(FAVORITE_GROUPS_KEY, JSON.stringify(favoriteGroups));
+  }, [favoriteGroups]);
 
   useEffect(() => {
     const updateClock = () => {
@@ -606,11 +663,19 @@ function App() {
       onSignOut={signOut}
     >
       {appRoute.page === "dashboard" && <DashboardPage navigate={navigate} accountProfile={accountProfile} strategies={currentStrategies} />}
-      {appRoute.page === "market" && <MarketPage accountProfile={accountProfile} orders={currentOrders} setOrders={updateCurrentOrders} />}
+      {appRoute.page === "market" && (
+        <MarketPage
+          accountProfile={accountProfile}
+          orders={currentOrders}
+          setOrders={updateCurrentOrders}
+          favoriteGroups={favoriteGroups}
+          setFavoriteGroups={setFavoriteGroups}
+        />
+      )}
       {appRoute.page === "strategy" && (
         <StrategyPage
           navigate={navigate}
-          favoriteGroups={initialGroups}
+          favoriteGroups={favoriteGroups}
           executionMode={executionMode}
           strategies={currentStrategies}
           setStrategies={updateCurrentStrategies}
@@ -760,12 +825,12 @@ function DashboardPage({ navigate, accountProfile, strategies }) {
         }
       />
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-gutter">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-gutter">
         {accountProfile.dashboardCards.map(([label, value, meta, tone]) => (
           <div className="bg-surface-container rounded-lg border border-outline-variant p-widget-padding" key={label}>
             <p className="font-body-sm text-body-sm text-on-surface-variant">{label}</p>
             <div className="flex items-end justify-between mt-2">
-              <strong className={`font-headline-lg text-headline-lg ${tone === "secondary" ? "text-secondary" : tone === "tertiary" ? "text-tertiary" : "text-on-surface"}`}>{value}</strong>
+              <strong className={`font-headline-lg text-headline-lg ${tone === "secondary" ? "text-secondary" : tone === "tertiary" ? "text-tertiary" : tone === "primary" ? "text-primary" : "text-on-surface"}`}>{value}</strong>
               <span className="font-label-mono text-label-mono text-on-surface-variant">{meta}</span>
             </div>
           </div>
@@ -875,15 +940,19 @@ function DashboardPage({ navigate, accountProfile, strategies }) {
   );
 }
 
-function MarketPage({ accountProfile, orders, setOrders }) {
+function MarketPage({ accountProfile, orders, setOrders, favoriteGroups, setFavoriteGroups }) {
   const [query, setQuery] = useState("");
   const [selectedCode, setSelectedCode] = useState(stocks[0].code);
   const [tab, setTab] = useState("all");
-  const [groups, setGroups] = useState(initialGroups);
-  const [openGroups, setOpenGroups] = useState({ "핵심 관심": true, "단기 관찰": true });
+  const [openGroups, setOpenGroups] = useState(() => Object.fromEntries(Object.keys(favoriteGroups).map((groupName) => [groupName, true])));
   const [pendingStock, setPendingStock] = useState(null);
+  const [groupNameDraft, setGroupNameDraft] = useState("");
+  const [groupError, setGroupError] = useState("");
+  const [modalGroupNameDraft, setModalGroupNameDraft] = useState("");
+  const [modalGroupError, setModalGroupError] = useState("");
   const [editingOrderId, setEditingOrderId] = useState(null);
 
+  const groups = favoriteGroups;
   const selected = stocks.find((stock) => stock.code === selectedCode) || stocks[0];
   const [orderPrice, setOrderPrice] = useState(selected.current);
   const editingOrder = orders.find((order) => order.id === editingOrderId && OPEN_ORDER_STATUSES.includes(order.status)) || null;
@@ -891,7 +960,8 @@ function MarketPage({ accountProfile, orders, setOrders }) {
   const normalizedQuery = query.trim().toLowerCase();
   const matchesStockQuery = (stock) => `${stock.name} ${stock.code} ${stock.sector}`.toLowerCase().includes(normalizedQuery);
   const filteredStocks = stocks.filter(matchesStockQuery);
-  const filteredFavoriteGroups = Object.entries(groups)
+  const groupEntries = Object.entries(groups);
+  const filteredFavoriteGroups = groupEntries
     .map(([groupName, codes]) => [
       groupName,
       codes.filter((code) => {
@@ -915,18 +985,107 @@ function MarketPage({ accountProfile, orders, setOrders }) {
     setEditingOrderId(null);
   }
 
+  function normalizeGroupName(value) {
+    return value.trim().replace(/\s+/g, " ");
+  }
+
+  function findExistingGroupName(groupName) {
+    return Object.keys(groups).find((name) => name.toLowerCase() === groupName.toLowerCase());
+  }
+
+  function createGroup(rawName, stockCode = "", setError = setGroupError) {
+    const groupName = normalizeGroupName(rawName);
+    if (!groupName) {
+      setError("그룹 이름을 입력하세요.");
+      return false;
+    }
+
+    if (findExistingGroupName(groupName)) {
+      setError("이미 존재하는 그룹입니다.");
+      return false;
+    }
+
+    setFavoriteGroups((current) => ({
+      ...current,
+      [groupName]: stockCode ? [stockCode] : []
+    }));
+    setOpenGroups((current) => ({ ...current, [groupName]: true }));
+    setError("");
+    return true;
+  }
+
+  function submitGroupCreate(event) {
+    event.preventDefault();
+    if (createGroup(groupNameDraft)) {
+      setGroupNameDraft("");
+      setTab("favorites");
+    }
+  }
+
+  function submitModalGroupCreate(event) {
+    event.preventDefault();
+    if (!pendingStock) return;
+    if (createGroup(modalGroupNameDraft, pendingStock.code, setModalGroupError)) {
+      setModalGroupNameDraft("");
+      setPendingStock(null);
+      setTab("favorites");
+    }
+  }
+
+  function openGroupPicker(stock) {
+    setPendingStock(stock);
+    setModalGroupNameDraft("");
+    setModalGroupError("");
+  }
+
+  function closeGroupPicker() {
+    setPendingStock(null);
+    setModalGroupNameDraft("");
+    setModalGroupError("");
+  }
+
   function addToGroup(groupName) {
     if (!pendingStock) return;
-    setGroups((current) => ({
+    setFavoriteGroups((current) => ({
       ...current,
       [groupName]: Array.from(new Set([...(current[groupName] || []), pendingStock.code]))
     }));
     setOpenGroups((current) => ({ ...current, [groupName]: true }));
-    setPendingStock(null);
+    closeGroupPicker();
   }
 
-  function removeFavorite(code) {
-    setGroups((current) => Object.fromEntries(Object.entries(current).map(([group, codes]) => [group, codes.filter((item) => item !== code)])));
+  function removeFromGroup(groupName, code) {
+    setFavoriteGroups((current) => ({
+      ...current,
+      [groupName]: (current[groupName] || []).filter((item) => item !== code)
+    }));
+  }
+
+  function togglePendingStockInGroup(groupName) {
+    if (!pendingStock) return;
+
+    if ((groups[groupName] || []).includes(pendingStock.code)) {
+      removeFromGroup(groupName, pendingStock.code);
+    } else {
+      addToGroup(groupName);
+      return;
+    }
+
+    closeGroupPicker();
+  }
+
+  function deleteGroup(groupName) {
+    const confirmed = window.confirm(`'${groupName}' 그룹을 삭제할까요? 포함된 종목도 관심 그룹에서 제외됩니다.`);
+    if (!confirmed) return;
+
+    setFavoriteGroups((current) => {
+      const { [groupName]: removed, ...rest } = current;
+      return rest;
+    });
+    setOpenGroups((current) => {
+      const { [groupName]: removed, ...rest } = current;
+      return rest;
+    });
   }
 
   function getOrderTime() {
@@ -1032,6 +1191,21 @@ function MarketPage({ accountProfile, orders, setOrders }) {
                 </button>
               ))}
             </div>
+            <form className="mt-gutter grid grid-cols-[1fr_auto] gap-gutter" onSubmit={submitGroupCreate}>
+              <input
+                className="min-w-0 bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-body-sm text-body-sm text-on-surface placeholder:text-outline focus:ring-1 focus:ring-primary"
+                placeholder="새 관심 그룹"
+                value={groupNameDraft}
+                onChange={(event) => {
+                  setGroupNameDraft(event.target.value);
+                  setGroupError("");
+                }}
+              />
+              <button className="px-3 py-2 rounded bg-primary-container text-on-primary-container hover:brightness-110 flex items-center justify-center" type="submit" aria-label="관심 그룹 추가">
+                <Icon className="text-[18px]">add</Icon>
+              </button>
+            </form>
+            {groupError ? <p className="mt-2 font-body-sm text-body-sm text-error">{groupError}</p> : null}
           </div>
 
           <div className="section-body-scroll custom-scrollbar flex-1">
@@ -1044,7 +1218,7 @@ function MarketPage({ accountProfile, orders, setOrders }) {
                     selected={selectedCode === stock.code}
                     favorite={favoriteCodes.has(stock.code)}
                     onSelect={() => selectStock(stock.code)}
-                    onFavorite={() => favoriteCodes.has(stock.code) ? removeFavorite(stock.code) : setPendingStock(stock)}
+                    onFavorite={() => openGroupPicker(stock)}
                   />
                 ))
               ) : (
@@ -1054,26 +1228,40 @@ function MarketPage({ accountProfile, orders, setOrders }) {
               <div className="divide-y divide-outline-variant/40">
                 {filteredFavoriteGroups.map(([groupName, codes]) => (
                   <div key={groupName}>
-                    <button className="w-full p-widget-padding bg-surface-container-low flex items-center justify-between" type="button" onClick={() => setOpenGroups((current) => ({ ...current, [groupName]: !current[groupName] }))}>
-                      <span className="font-title-sm text-title-sm text-on-surface">{groupName}</span>
-                      <Icon className="text-on-surface-variant">{openGroups[groupName] ? "expand_less" : "expand_more"}</Icon>
-                    </button>
-                    {openGroups[groupName] ? codes.map((code) => {
-                      const stock = stocks.find((item) => item.code === code);
-                      return stock ? (
-                        <StockRow
-                          key={`${groupName}-${code}`}
-                          stock={stock}
-                          selected={selectedCode === stock.code}
-                          favorite
-                          onSelect={() => selectStock(stock.code)}
-                          onFavorite={() => removeFavorite(stock.code)}
-                        />
-                      ) : null;
-                    }) : null}
+                    <div className="p-widget-padding bg-surface-container-low flex items-center justify-between gap-2">
+                      <button className="min-w-0 flex flex-1 items-center justify-between gap-3 text-left" type="button" onClick={() => setOpenGroups((current) => ({ ...current, [groupName]: !current[groupName] }))}>
+                        <span className="min-w-0">
+                          <span className="block font-title-sm text-title-sm text-on-surface truncate">{groupName}</span>
+                          <span className="block font-body-sm text-body-sm text-on-surface-variant mt-0.5">{groups[groupName]?.length || 0}개 종목</span>
+                        </span>
+                        <Icon className="text-on-surface-variant">{openGroups[groupName] ? "expand_less" : "expand_more"}</Icon>
+                      </button>
+                      <button className="p-2 rounded text-on-surface-variant hover:text-error hover:bg-error/10" type="button" onClick={() => deleteGroup(groupName)} aria-label={`${groupName} 그룹 삭제`}>
+                        <Icon className="text-[18px]">delete</Icon>
+                      </button>
+                    </div>
+                    {openGroups[groupName] ? (
+                      codes.length ? codes.map((code) => {
+                        const stock = stocks.find((item) => item.code === code);
+                        return stock ? (
+                          <StockRow
+                            key={`${groupName}-${code}`}
+                            stock={stock}
+                            selected={selectedCode === stock.code}
+                            favorite
+                            onSelect={() => selectStock(stock.code)}
+                            onFavorite={() => removeFromGroup(groupName, stock.code)}
+                          />
+                        ) : null;
+                      }) : (
+                        <div className="p-widget-padding font-body-sm text-body-sm text-on-surface-variant">아직 담긴 종목이 없습니다.</div>
+                      )
+                    ) : null}
                   </div>
                 ))}
-                {visibleStockCount === 0 ? (
+                {!groupEntries.length ? (
+                  <div className="p-widget-padding text-center font-body-md text-body-md text-on-surface-variant">관심 그룹이 없습니다. 새 관심 그룹을 추가하세요.</div>
+                ) : visibleStockCount === 0 ? (
                   <div className="p-widget-padding text-center font-body-md text-body-md text-on-surface-variant">관심 종목 검색 결과가 없습니다.</div>
                 ) : null}
               </div>
@@ -1194,13 +1382,47 @@ function MarketPage({ accountProfile, orders, setOrders }) {
           <div className="w-full max-w-md bg-surface-container rounded-lg border border-outline-variant overflow-hidden">
             <SectionTitle icon="star" title="관심 그룹 선택" meta={pendingStock.name} />
             <div className="p-widget-padding space-y-gutter">
-              {Object.keys(groups).map((groupName) => (
-                <button className="w-full p-3 rounded border border-outline-variant hover:bg-surface-container-highest text-left" key={groupName} type="button" onClick={() => addToGroup(groupName)}>
-                  <span className="block font-title-sm text-title-sm text-on-surface">{groupName}</span>
-                  <span className="block font-body-sm text-body-sm text-on-surface-variant mt-1">현재 {groups[groupName].length}개 종목</span>
+              {groupEntries.length ? groupEntries.map(([groupName, codes]) => {
+                const included = codes.includes(pendingStock.code);
+                return (
+                  <button
+                    className={`w-full p-3 rounded border text-left flex items-center justify-between gap-3 hover:bg-surface-container-highest ${included ? "border-secondary/50 bg-secondary/10" : "border-outline-variant"}`}
+                    key={groupName}
+                    type="button"
+                    onClick={() => togglePendingStockInGroup(groupName)}
+                  >
+                    <span>
+                      <span className="block font-title-sm text-title-sm text-on-surface">{groupName}</span>
+                      <span className="block font-body-sm text-body-sm text-on-surface-variant mt-1">
+                        {included ? "포함됨 · 클릭하면 제외" : `현재 ${codes.length}개 종목`}
+                      </span>
+                    </span>
+                    <Icon className={included ? "text-secondary" : "text-on-surface-variant"}>{included ? "check_circle" : "add_circle"}</Icon>
+                  </button>
+                );
+              }) : (
+                <div className="rounded border border-outline-variant bg-surface-container-low p-3 font-body-sm text-body-sm text-on-surface-variant">아직 관심 그룹이 없습니다.</div>
+              )}
+              <form className="grid grid-cols-1 gap-gutter border-t border-outline-variant pt-widget-padding" onSubmit={submitModalGroupCreate}>
+                <label className="block">
+                  <span className="font-label-caps text-label-caps text-on-surface-variant">새 그룹 만들기</span>
+                  <input
+                    className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-body-md text-body-md text-on-surface placeholder:text-outline focus:ring-1 focus:ring-primary"
+                    placeholder="그룹 이름"
+                    value={modalGroupNameDraft}
+                    onChange={(event) => {
+                      setModalGroupNameDraft(event.target.value);
+                      setModalGroupError("");
+                    }}
+                  />
+                </label>
+                {modalGroupError ? <p className="font-body-sm text-body-sm text-error">{modalGroupError}</p> : null}
+                <button className="w-full py-2 rounded bg-primary-container text-on-primary-container font-label-caps text-label-caps hover:brightness-110 flex items-center justify-center gap-2" type="submit">
+                  <Icon className="text-[18px]">create_new_folder</Icon>
+                  새 그룹에 추가
                 </button>
-              ))}
-              <button className="w-full py-2 rounded bg-surface-container-high text-on-surface-variant font-label-caps text-label-caps" type="button" onClick={() => setPendingStock(null)}>닫기</button>
+              </form>
+              <button className="w-full py-2 rounded bg-surface-container-high text-on-surface-variant font-label-caps text-label-caps" type="button" onClick={closeGroupPicker}>닫기</button>
             </div>
           </div>
         </div>
@@ -1635,6 +1857,8 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
   const [selectedImportId, setSelectedImportId] = useState("");
   const [strategyQuery, setStrategyQuery] = useState("");
   const [strategyStatusFilter, setStrategyStatusFilter] = useState("전체 상태");
+  const [strategyDraft, setStrategyDraft] = useState(null);
+  const [backtestDates, setBacktestDates] = useState(getInitialBacktestDates);
   const modeLabel = accountProfiles[executionMode].shortLabel;
   const sourceModeLabel = accountProfiles[sourceMode].shortLabel;
   const normalizedStrategyQuery = strategyQuery.trim().toLowerCase();
@@ -1655,6 +1879,7 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
   }), [normalizedStrategyQuery, strategies, strategyStatusFilter]);
   const selectedImportStrategy = importableStrategies.find((strategy) => String(strategy.id) === String(selectedImportId)) || importableStrategies[0];
   const selected = strategies.find((strategy) => strategy.id === selectedId) || strategies[0];
+  const selectedDraft = strategyDraft?.id === selectedId ? strategyDraft : createStrategyDraft(selected);
 
   useEffect(() => {
     if (!strategies.length) {
@@ -1687,32 +1912,109 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
     }
   }, [importableStrategies, selectedImportId]);
 
-  const selectedScope = selected?.scope || "개별 종목";
-  const activeConditions = conditionSide === "buy"
-    ? selected?.buyConditions || defaultBuyConditions
-    : selected?.sellConditions || defaultSellConditions;
+  useEffect(() => {
+    setStrategyDraft(createStrategyDraft(selected));
+  }, [selectedId]);
 
-  function updateSelectedStrategy(patch) {
-    if (!selectedId) return;
-    setStrategies((current) => current.map((strategy) => strategy.id === selectedId ? { ...strategy, ...patch } : strategy));
+  const selectedScope = selectedDraft?.scope || "개별 종목";
+  const activeConditions = conditionSide === "buy"
+    ? selectedDraft?.buyConditions || defaultBuyConditions
+    : selectedDraft?.sellConditions || defaultSellConditions;
+
+  function createStrategyDraft(strategy) {
+    if (!strategy) return null;
+
+    return {
+      id: strategy.id,
+      name: strategy.name || "",
+      orderMode: strategy.orderMode || "승인 후 주문",
+      scope: strategy.scope || "개별 종목",
+      target: strategy.target || "삼성전자",
+      buyConditions: (strategy.buyConditions || defaultBuyConditions).map((condition) => [...condition]),
+      sellConditions: (strategy.sellConditions || defaultSellConditions).map((condition) => [...condition])
+    };
   }
 
-  function updateCondition(index, field, value) {
+  function updateStrategyDraft(patch) {
+    if (!selectedId) return;
+    setStrategyDraft((current) => {
+      const baseDraft = current?.id === selectedId ? current : createStrategyDraft(selected);
+      return baseDraft ? { ...baseDraft, ...patch } : baseDraft;
+    });
+  }
+
+  function updateDraftCondition(index, field, value) {
     if (!selectedId) return;
     const key = conditionSide === "buy" ? "buyConditions" : "sellConditions";
-    setStrategies((current) =>
-      current.map((strategy) => {
-        if (strategy.id !== selectedId) return strategy;
-        const baseConditions = strategy[key] || (conditionSide === "buy" ? defaultBuyConditions : defaultSellConditions);
-        const nextConditions = baseConditions.map((condition, conditionIndex) => {
+    setStrategyDraft((current) => {
+      const baseDraft = current?.id === selectedId ? current : createStrategyDraft(selected);
+      if (!baseDraft) return baseDraft;
+      const baseConditions = baseDraft[key] || (conditionSide === "buy" ? defaultBuyConditions : defaultSellConditions);
+      return {
+        ...baseDraft,
+        [key]: baseConditions.map((condition, conditionIndex) => {
           if (conditionIndex !== index) return condition;
           const nextCondition = [...condition];
           nextCondition[field] = value;
           return nextCondition;
-        });
-        return { ...strategy, [key]: nextConditions };
+        })
+      };
+    });
+  }
+
+  function saveSelectedStrategySettings() {
+    if (!selectedId || !selectedDraft) return;
+    const savedDraft = {
+      ...selectedDraft,
+      name: selectedDraft.name.trim() || "이름 없는 전략",
+      buyConditions: selectedDraft.buyConditions.map((condition) => [...condition]),
+      sellConditions: selectedDraft.sellConditions.map((condition) => [...condition])
+    };
+
+    setStrategies((current) =>
+      current.map((strategy) => {
+        if (strategy.id !== selectedId) return strategy;
+        return {
+          ...strategy,
+          name: savedDraft.name,
+          orderMode: savedDraft.orderMode,
+          scope: savedDraft.scope,
+          target: savedDraft.target,
+          buyConditions: savedDraft.buyConditions,
+          sellConditions: savedDraft.sellConditions
+        };
       })
     );
+    setStrategyDraft(savedDraft);
+    setImportMessage(`${savedDraft.name} 설정을 저장했습니다.`);
+  }
+
+  function updateBacktestStartDate(value) {
+    setBacktestDates((current) => {
+      if (value < current.minStartDate) {
+        return {
+          ...current,
+          startDate: current.minStartDate,
+          warning: `시작일은 현재일 기준 90일 전인 ${current.minStartDate}보다 이전으로 설정할 수 없습니다.`
+        };
+      }
+
+      return { ...current, startDate: value, warning: "" };
+    });
+  }
+
+  function updateBacktestEndDate(value) {
+    setBacktestDates((current) => {
+      if (value > current.maxEndDate) {
+        return {
+          ...current,
+          endDate: current.maxEndDate,
+          warning: `종료일은 현재일인 ${current.maxEndDate} 이후로 설정할 수 없습니다.`
+        };
+      }
+
+      return { ...current, endDate: value, warning: "" };
+    });
   }
 
   function updateStatus(status) {
@@ -1898,16 +2200,16 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
                   <input
                     className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-body-md text-body-md text-on-surface"
                     type="text"
-                    value={selected?.name || ""}
-                    onChange={(event) => updateSelectedStrategy({ name: event.target.value })}
+                    value={selectedDraft?.name || ""}
+                    onChange={(event) => updateStrategyDraft({ name: event.target.value })}
                   />
                 </label>
                 <label className="block">
                   <span className="font-label-caps text-label-caps text-on-surface-variant">주문 실행 방식</span>
                   <select
                     className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-body-md text-body-md text-on-surface"
-                    value={selected?.orderMode || "승인 후 주문"}
-                    onChange={(event) => updateSelectedStrategy({ orderMode: event.target.value })}
+                    value={selectedDraft?.orderMode || "승인 후 주문"}
+                    onChange={(event) => updateStrategyDraft({ orderMode: event.target.value })}
                   >
                     <option>승인 후 주문</option>
                     <option>자동 주문</option>
@@ -1923,7 +2225,7 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
                       className={`py-2 rounded border font-label-caps text-label-caps ${selectedScope === item ? "border-primary bg-primary/10 text-primary" : "border-outline-variant text-on-surface-variant hover:bg-surface-container-highest"}`}
                       key={item}
                       type="button"
-                      onClick={() => updateSelectedStrategy({ scope: item, target: item === "전체 종목" ? "전체 종목" : item === "종목 그룹" ? Object.keys(favoriteGroups)[0] || "관심 그룹 없음" : "삼성전자" })}
+                      onClick={() => updateStrategyDraft({ scope: item, target: item === "전체 종목" ? "전체 종목" : item === "종목 그룹" ? Object.keys(favoriteGroups)[0] || "관심 그룹 없음" : "삼성전자" })}
                     >
                       {item}
                     </button>
@@ -1936,8 +2238,8 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
                       <input
                         className="w-full bg-surface-container-lowest border border-outline-variant rounded pl-10 pr-3 py-2 font-body-md text-body-md text-on-surface"
                         placeholder="종목명 또는 코드 검색"
-                        value={selected?.target || ""}
-                        onChange={(event) => updateSelectedStrategy({ target: event.target.value })}
+                        value={selectedDraft?.target || ""}
+                        onChange={(event) => updateStrategyDraft({ target: event.target.value })}
                       />
                     </div>
                   ) : null}
@@ -1945,8 +2247,8 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
                     Object.keys(favoriteGroups).length ? (
                       <select
                         className="w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-body-md text-body-md text-on-surface"
-                        value={selected?.target || Object.keys(favoriteGroups)[0]}
-                        onChange={(event) => updateSelectedStrategy({ target: event.target.value })}
+                        value={selectedDraft?.target || Object.keys(favoriteGroups)[0]}
+                        onChange={(event) => updateStrategyDraft({ target: event.target.value })}
                       >
                         {Object.keys(favoriteGroups).map((group) => <option key={group}>{group}</option>)}
                       </select>
@@ -1980,7 +2282,7 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
                       <select
                         className="bg-surface-container-lowest border border-outline-variant rounded px-2 py-2 font-body-sm text-body-sm text-on-surface"
                         value={indicator}
-                        onChange={(event) => updateCondition(index, 0, event.target.value)}
+                        onChange={(event) => updateDraftCondition(index, 0, event.target.value)}
                       >
                         <option>{indicator}</option>
                         <option>이동평균선</option>
@@ -1999,7 +2301,7 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
                       <select
                         className="bg-surface-container-lowest border border-outline-variant rounded px-2 py-2 font-body-sm text-body-sm text-on-surface"
                         value={operator}
-                        onChange={(event) => updateCondition(index, 1, event.target.value)}
+                        onChange={(event) => updateDraftCondition(index, 1, event.target.value)}
                       >
                         <option>{operator}</option>
                         <option>이상</option>
@@ -2010,7 +2312,7 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
                       <input
                         className="bg-surface-container-lowest border border-outline-variant rounded px-2 py-2 font-label-mono text-label-mono text-right text-on-surface"
                         value={value}
-                        onChange={(event) => updateCondition(index, 2, event.target.value)}
+                        onChange={(event) => updateDraftCondition(index, 2, event.target.value)}
                       />
                     </div>
                   ))}
@@ -2020,7 +2322,7 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
               <div className="grid grid-cols-1 md:grid-cols-3 gap-gutter">
                 <NumberInput label="전략별 손실 한도" value="500,000" suffix="원" />
                 <NumberInput label="종목별 주문 한도" value="2,000,000" suffix="원" />
-                <button className="self-end py-2 rounded bg-primary-container text-on-primary-container font-label-caps text-label-caps hover:brightness-110" type="button">설정 저장</button>
+                <button className="self-end py-2 rounded bg-primary-container text-on-primary-container font-label-caps text-label-caps hover:brightness-110" type="button" onClick={saveSelectedStrategySettings}>설정 저장</button>
               </div>
             </div>
           </Section>
@@ -2043,13 +2345,30 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
                 </label>
                 <label className="block">
                   <span className="font-label-caps text-label-caps text-on-surface-variant">시작일</span>
-                  <input className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-label-mono text-label-mono text-on-surface" type="date" defaultValue="2026-01-02" />
+                  <input
+                    className={`mt-1 w-full bg-surface-container-lowest border rounded px-3 py-2 font-label-mono text-label-mono text-on-surface ${backtestDates.warning.startsWith("시작일") ? "border-error" : "border-outline-variant"}`}
+                    type="date"
+                    value={backtestDates.startDate}
+                    min={backtestDates.minStartDate}
+                    max={backtestDates.maxEndDate}
+                    onChange={(event) => updateBacktestStartDate(event.target.value)}
+                  />
                 </label>
                 <label className="block">
                   <span className="font-label-caps text-label-caps text-on-surface-variant">종료일</span>
-                  <input className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-label-mono text-label-mono text-on-surface" type="date" defaultValue="2026-06-19" />
+                  <input
+                    className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-label-mono text-label-mono text-on-surface"
+                    type="date"
+                    value={backtestDates.endDate}
+                    min={backtestDates.minStartDate}
+                    max={backtestDates.maxEndDate}
+                    onChange={(event) => updateBacktestEndDate(event.target.value)}
+                  />
                 </label>
                 <NumberInput label="초기 자금" value="10,000,000" suffix="원" />
+              </div>
+              <div className={`rounded border p-3 font-body-sm text-body-sm ${backtestDates.warning ? "border-error/30 bg-error/10 text-error" : "border-outline-variant bg-surface-container-low text-on-surface-variant"}`}>
+                {backtestDates.warning || `백테스트 기간은 현재일 ${backtestDates.maxEndDate} 기준 최근 90일(${backtestDates.minStartDate} 이후)까지만 설정할 수 있습니다.`}
               </div>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-gutter">
                 {[
