@@ -6,10 +6,13 @@ const EXECUTION_MODE_KEY = "aerotrade.executionMode";
 const AUTH_SESSION_KEY = "aerotrade.authSession";
 const FAVORITE_GROUPS_KEY = "aerotrade.favoriteGroups";
 
+const validPages = ["dashboard", "market", "strategy", "backtest", "record", "setting", "login"];
+
 const navItems = [
   { page: "dashboard", label: "대시보드", icon: "dashboard" },
   { page: "market", label: "시장", icon: "monitoring" },
   { page: "strategy", label: "전략 관리", icon: "psychology" },
+  { page: "backtest", label: "백테스트", icon: "science" },
   { page: "record", label: "기록 및 알림", icon: "history" },
   { page: "setting", label: "설정", icon: "settings" }
 ];
@@ -251,19 +254,124 @@ const marketOrdersByModeSeed = {
   }))
 };
 
-const defaultBuyConditions = [
-  ["거래량 증가율", "이상", "130"],
-  ["RSI", "이하", "55"],
-  ["현재가", "상향 돌파", "20일선"],
-  ["외국인 순매수", "이상", "50억"]
+const conditionIndicatorOptions = [
+  "이동평균선",
+  "MACD",
+  "체결강도",
+  "거래량 증가율",
+  "RSI",
+  "현재가",
+  "외국인 순매수",
+  "기관 순매수",
+  "거래대금",
+  "손절률",
+  "수익률",
+  "거래량 감소율"
 ];
 
-const defaultSellConditions = [
-  ["손절률", "이하", "-3"],
-  ["수익률", "이상", "6"],
-  ["RSI", "이상", "72"],
-  ["거래량 감소율", "이상", "40"]
-];
+const conditionOperatorOptions = ["이상", "이하", "상향 돌파", "하향 이탈"];
+
+function createEmptyCondition(side = "buy") {
+  return side === "sell" ? ["손절률", "이하", "-3"] : ["이동평균선", "상향 돌파", "20일선"];
+}
+
+function cloneStrategyConditions(conditions, side = "buy") {
+  const source = Array.isArray(conditions) && conditions.length ? conditions : [createEmptyCondition(side)];
+  return source.map(([indicator, operator, value]) => [
+    indicator || createEmptyCondition(side)[0],
+    operator || createEmptyCondition(side)[1],
+    value || createEmptyCondition(side)[2]
+  ]);
+}
+
+function createStageId(side = "buy") {
+  return `${side}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function createStrategyStage(side = "buy", order = 1, conditions = null, allocation = "") {
+  const isPrimary = order === 1;
+  return {
+    id: isPrimary ? `${side}-primary` : createStageId(side),
+    allocation: allocation || (isPrimary ? "50" : "25"),
+    triggerType: isPrimary ? "conditions" : "percent",
+    triggerOperator: isPrimary ? "충족" : side === "buy" ? "하락" : "상승",
+    triggerValue: isPrimary ? "" : side === "buy" ? "3" : "5",
+    conditions: isPrimary ? cloneStrategyConditions(conditions, side) : []
+  };
+}
+
+function cloneStrategyStages(strategy, side = "buy") {
+  const stageKey = side === "buy" ? "buyStages" : "sellStages";
+  const conditionKey = side === "buy" ? "buyConditions" : "sellConditions";
+  const hasExplicitStages = Object.prototype.hasOwnProperty.call(strategy || {}, stageKey);
+  const sourceStages = hasExplicitStages && Array.isArray(strategy?.[stageKey])
+    ? strategy[stageKey]
+    : [createStrategyStage(side, 1, strategy?.[conditionKey])];
+
+  return sourceStages.map((stage, index) => {
+    const isPrimary = index === 0;
+    const fallback = createStrategyStage(side, index + 1, isPrimary ? strategy?.[conditionKey] : null);
+    return {
+      ...fallback,
+      ...stage,
+      id: stage.id || fallback.id,
+      allocation: String(stage.allocation ?? fallback.allocation),
+      triggerType: isPrimary ? "conditions" : "percent",
+      triggerOperator: isPrimary ? "충족" : stage.triggerOperator || fallback.triggerOperator,
+      triggerValue: isPrimary ? "" : String(stage.triggerValue ?? fallback.triggerValue),
+      conditions: isPrimary ? cloneStrategyConditions(stage.conditions || strategy?.[conditionKey], side) : []
+    };
+  });
+}
+
+function getAllocationAmount(value) {
+  const amount = Number.parseFloat(String(value ?? "").replace(/[^\d.]/g, ""));
+  return Number.isFinite(amount) ? Math.max(0, amount) : 0;
+}
+
+function formatAllocationAmount(value) {
+  return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(2)));
+}
+
+function getStockByCode(code) {
+  return stocks.find((stock) => stock.code === code);
+}
+
+function formatStockOptionValue(stock) {
+  return `${stock.name} (${stock.code})`;
+}
+
+function getTargetStockCodes(strategy) {
+  if (Array.isArray(strategy?.targetStocks)) {
+    return [...new Set(strategy.targetStocks.filter((code) => getStockByCode(code)))];
+  }
+
+  const target = String(strategy?.target || "");
+  return stocks
+    .filter((stock) => target.includes(stock.name) || target.includes(stock.code))
+    .map((stock) => stock.code);
+}
+
+function summarizeTargetStocks(codes) {
+  const uniqueCodes = [...new Set(codes.filter((code) => getStockByCode(code)))];
+  if (!uniqueCodes.length) return "대상 미지정";
+  const firstStock = getStockByCode(uniqueCodes[0]);
+  return uniqueCodes.length === 1 ? firstStock.name : `${firstStock.name} 외 ${uniqueCodes.length - 1}개`;
+}
+
+function findStockBySearchValue(value) {
+  const query = String(value || "").trim().toLowerCase();
+  if (!query) return null;
+
+  return stocks.find((stock) => {
+    const name = stock.name.toLowerCase();
+    return query.includes(stock.code) || query.includes(name) || stock.code.includes(query) || name.includes(query);
+  });
+}
+
+const defaultBuyConditions = [createEmptyCondition("buy")];
+
+const defaultSellConditions = [createEmptyCondition("sell")];
 
 const strategiesSeed = [
   {
@@ -273,6 +381,7 @@ const strategiesSeed = [
     orderMode: "승인 후 주문",
     scope: "개별 종목",
     target: "삼성전자 외 2개",
+    targetStocks: ["005930", "000660", "035420"],
     returnRate: "+8.7%",
     winRate: "62%",
     description: "장 초반 거래량과 돌파 조건을 함께 확인합니다.",
@@ -420,10 +529,12 @@ function getInitialFavoriteGroups() {
 }
 
 function readRoute() {
-  const raw = window.location.hash.replace("#", "") || "dashboard";
-  const [page, anchor] = raw.split(":");
-  const validPage = ["dashboard", "market", "strategy", "record", "setting", "login"].includes(page) ? page : "dashboard";
-  return { page: validPage, anchor: anchor || "" };
+  const raw = window.location.hash.replace(/^#\/?/, "") || "dashboard";
+  const [rawPage, rawAnchor] = raw.split(":");
+  const page = rawPage.replace(/^\/+/, "").split(/[/?&]/)[0] || "dashboard";
+  const anchor = rawAnchor?.replace(/^\/+/, "").split(/[/?&]/)[0] || "";
+  const validPage = validPages.includes(page) ? page : "dashboard";
+  return { page: validPage, anchor };
 }
 
 function Icon({ children, className = "", ...props }) {
@@ -567,8 +678,13 @@ function App() {
   }, [route]);
 
   function navigate(page, anchor = "") {
-    window.location.hash = anchor ? `${page}:${anchor}` : page;
-    setRoute({ page, anchor });
+    const nextPage = validPages.includes(page) ? page : "dashboard";
+    const nextAnchor = anchor || "";
+    const nextHash = nextAnchor ? `/${nextPage}:${nextAnchor}` : `/${nextPage}`;
+    if (window.location.hash !== `#${nextHash}`) {
+      window.location.hash = nextHash;
+    }
+    setRoute({ page: nextPage, anchor: nextAnchor });
   }
 
   function signIn() {
@@ -683,6 +799,7 @@ function App() {
           sourceMode={otherMode}
         />
       )}
+      {appRoute.page === "backtest" && <BacktestPage strategies={currentStrategies} executionMode={executionMode} />}
       {appRoute.page === "record" && <RecordPage />}
       {appRoute.page === "setting" && (
         <SettingsPage
@@ -1459,7 +1576,7 @@ function IntradayChart() {
   return (
     <div className="flex h-full flex-col">
       <h3 className="font-headline-md text-headline-md text-on-surface mb-3">일중 그래프</h3>
-      <div className="h-[430px] bg-surface-container-low rounded border border-outline-variant p-3 flex items-end gap-1">
+      <div className="h-[470px] bg-surface-container-low rounded border border-outline-variant p-3 flex items-end gap-1">
         {bars.map((bar, index) => (
           <div className={`flex-1 rounded-t ${index % 5 === 2 ? "chart-bar-down" : "chart-bar-up"}`} style={{ height: `${bar}%` }} key={bar + index} />
         ))}
@@ -1497,7 +1614,7 @@ function OrderBook({ current, selectedPrice, onSelectPrice }) {
         <h3 className="font-headline-md text-headline-md text-on-surface">호가</h3>
         <span className="font-label-mono text-label-mono text-on-surface-variant">가격 클릭 시 주문가 반영</span>
       </div>
-      <div className="h-[430px] rounded border border-outline-variant overflow-hidden flex flex-col">
+      <div className="h-[470px] rounded border border-outline-variant overflow-hidden flex flex-col">
         {asks.map((price, index) => renderPriceRow("ask", price, 4200 - index * 310, index))}
         <button
           className={`grid flex-1 grid-cols-2 items-center gap-2 px-2 py-1.5 bg-surface-container-high text-on-surface font-title-sm text-title-sm transition-colors hover:bg-surface-container-highest ${selectedPrice === current ? "ring-1 ring-primary" : ""}`}
@@ -1851,14 +1968,14 @@ function StockInfo({ selected, embedded = false }) {
 function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, setStrategies, sourceStrategies, sourceMode }) {
   const [selectedId, setSelectedId] = useState(strategies[0]?.id || null);
   const [conditionSide, setConditionSide] = useState("buy");
-  const [backtestStrategy, setBacktestStrategy] = useState(strategies[0]?.id || "");
   const [importMessage, setImportMessage] = useState("");
   const [showImportPicker, setShowImportPicker] = useState(false);
   const [selectedImportId, setSelectedImportId] = useState("");
   const [strategyQuery, setStrategyQuery] = useState("");
   const [strategyStatusFilter, setStrategyStatusFilter] = useState("전체 상태");
   const [strategyDraft, setStrategyDraft] = useState(null);
-  const [backtestDates, setBacktestDates] = useState(getInitialBacktestDates);
+  const [stockSearch, setStockSearch] = useState("");
+  const [allocationNotice, setAllocationNotice] = useState("");
   const modeLabel = accountProfiles[executionMode].shortLabel;
   const sourceModeLabel = accountProfiles[sourceMode].shortLabel;
   const normalizedStrategyQuery = strategyQuery.trim().toLowerCase();
@@ -1884,16 +2001,12 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
   useEffect(() => {
     if (!strategies.length) {
       setSelectedId(null);
-      setBacktestStrategy("");
       return;
     }
     if (!strategies.some((strategy) => strategy.id === selectedId)) {
       setSelectedId(strategies[0].id);
     }
-    if (!strategies.some((strategy) => strategy.id === backtestStrategy)) {
-      setBacktestStrategy(strategies[0].id);
-    }
-  }, [strategies, selectedId, backtestStrategy]);
+  }, [strategies, selectedId]);
 
   useEffect(() => {
     if (!filteredStrategies.length) return;
@@ -1914,15 +2027,24 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
 
   useEffect(() => {
     setStrategyDraft(createStrategyDraft(selected));
+    setStockSearch("");
+    setAllocationNotice("");
   }, [selectedId]);
 
+  useEffect(() => {
+    setAllocationNotice("");
+  }, [conditionSide]);
+
   const selectedScope = selectedDraft?.scope || "개별 종목";
-  const activeConditions = conditionSide === "buy"
-    ? selectedDraft?.buyConditions || defaultBuyConditions
-    : selectedDraft?.sellConditions || defaultSellConditions;
+  const stageKey = conditionSide === "buy" ? "buyStages" : "sellStages";
+  const activeStages = Array.isArray(selectedDraft?.[stageKey]) ? selectedDraft[stageKey] : [createStrategyStage(conditionSide, 1)];
+  const selectedTargetCodes = Array.isArray(selectedDraft?.targetStocks) ? selectedDraft.targetStocks : [];
+  const selectedTargetStocks = selectedTargetCodes.map((code) => getStockByCode(code)).filter(Boolean);
 
   function createStrategyDraft(strategy) {
     if (!strategy) return null;
+    const buyStages = cloneStrategyStages(strategy, "buy");
+    const sellStages = cloneStrategyStages(strategy, "sell");
 
     return {
       id: strategy.id,
@@ -1930,8 +2052,11 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
       orderMode: strategy.orderMode || "승인 후 주문",
       scope: strategy.scope || "개별 종목",
       target: strategy.target || "삼성전자",
-      buyConditions: (strategy.buyConditions || defaultBuyConditions).map((condition) => [...condition]),
-      sellConditions: (strategy.sellConditions || defaultSellConditions).map((condition) => [...condition])
+      targetStocks: getTargetStockCodes(strategy),
+      buyStages,
+      sellStages,
+      buyConditions: buyStages.length ? cloneStrategyConditions(buyStages[0]?.conditions, "buy") : [],
+      sellConditions: sellStages.length ? cloneStrategyConditions(sellStages[0]?.conditions, "sell") : []
     };
   }
 
@@ -1943,32 +2068,202 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
     });
   }
 
-  function updateDraftCondition(index, field, value) {
+  function updateTargetStocks(codes) {
+    const uniqueCodes = [...new Set(codes.filter((code) => getStockByCode(code)))];
+    updateStrategyDraft({
+      targetStocks: uniqueCodes,
+      target: summarizeTargetStocks(uniqueCodes)
+    });
+  }
+
+  function addTargetStock(rawValue = stockSearch) {
+    const stock = findStockBySearchValue(rawValue);
+    if (!stock) return;
+    updateTargetStocks([...selectedTargetCodes, stock.code]);
+    setStockSearch("");
+  }
+
+  function removeTargetStock(code) {
+    updateTargetStocks(selectedTargetCodes.filter((targetCode) => targetCode !== code));
+  }
+
+  function updateDraftStage(stageIndex, patch) {
     if (!selectedId) return;
-    const key = conditionSide === "buy" ? "buyConditions" : "sellConditions";
     setStrategyDraft((current) => {
       const baseDraft = current?.id === selectedId ? current : createStrategyDraft(selected);
       if (!baseDraft) return baseDraft;
-      const baseConditions = baseDraft[key] || (conditionSide === "buy" ? defaultBuyConditions : defaultSellConditions);
+      const baseStages = cloneStrategyStages(baseDraft, conditionSide);
+      const nextPatch = { ...patch };
+      if (Object.prototype.hasOwnProperty.call(nextPatch, "allocation")) {
+        const otherAllocation = baseStages.reduce((sum, stage, index) => index === stageIndex ? sum : sum + getAllocationAmount(stage.allocation), 0);
+        const maxAllocation = Math.max(0, 100 - otherAllocation);
+        const rawValue = String(nextPatch.allocation ?? "").replace(/[^\d.]/g, "");
+        const nextAllocation = getAllocationAmount(rawValue);
+        if (rawValue && nextAllocation > maxAllocation) {
+          setAllocationNotice(`${conditionSide === "buy" ? "매수" : "매도"} 비중 합계는 100%를 넘을 수 없습니다. 이 단계에는 최대 ${formatAllocationAmount(maxAllocation)}%까지 입력할 수 있습니다.`);
+          return baseDraft;
+        }
+        setAllocationNotice("");
+        nextPatch.allocation = rawValue ? formatAllocationAmount(nextAllocation) : "";
+      }
       return {
         ...baseDraft,
-        [key]: baseConditions.map((condition, conditionIndex) => {
-          if (conditionIndex !== index) return condition;
-          const nextCondition = [...condition];
-          nextCondition[field] = value;
-          return nextCondition;
+        [stageKey]: baseStages.map((stage, index) => index === stageIndex ? { ...stage, ...nextPatch } : stage)
+      };
+    });
+  }
+
+  function updateDraftStageCondition(stageIndex, conditionIndex, field, value) {
+    if (!selectedId) return;
+    setStrategyDraft((current) => {
+      const baseDraft = current?.id === selectedId ? current : createStrategyDraft(selected);
+      if (!baseDraft) return baseDraft;
+      const baseStages = cloneStrategyStages(baseDraft, conditionSide);
+      return {
+        ...baseDraft,
+        [stageKey]: baseStages.map((stage, index) => {
+          if (index !== stageIndex) return stage;
+          const conditions = cloneStrategyConditions(stage.conditions, conditionSide);
+          return {
+            ...stage,
+            conditions: conditions.map((condition, currentConditionIndex) => {
+              if (currentConditionIndex !== conditionIndex) return condition;
+              const nextCondition = [...condition];
+              nextCondition[field] = value;
+              return nextCondition;
+            })
+          };
         })
+      };
+    });
+  }
+
+  function addDraftStageCondition(stageIndex) {
+    if (!selectedId) return;
+    setStrategyDraft((current) => {
+      const baseDraft = current?.id === selectedId ? current : createStrategyDraft(selected);
+      if (!baseDraft) return baseDraft;
+      const baseStages = cloneStrategyStages(baseDraft, conditionSide);
+      return {
+        ...baseDraft,
+        [stageKey]: baseStages.map((stage, index) => {
+          if (index !== stageIndex) return stage;
+          return {
+            ...stage,
+            conditions: [...cloneStrategyConditions(stage.conditions, conditionSide), createEmptyCondition(conditionSide)]
+          };
+        })
+      };
+    });
+  }
+
+  function removeDraftStageCondition(stageIndex, conditionIndex) {
+    if (!selectedId) return;
+    setStrategyDraft((current) => {
+      const baseDraft = current?.id === selectedId ? current : createStrategyDraft(selected);
+      if (!baseDraft) return baseDraft;
+      const baseStages = cloneStrategyStages(baseDraft, conditionSide);
+      return {
+        ...baseDraft,
+        [stageKey]: baseStages.map((stage, index) => {
+          if (index !== stageIndex) return stage;
+          const nextConditions = cloneStrategyConditions(stage.conditions, conditionSide).filter((_, currentConditionIndex) => currentConditionIndex !== conditionIndex);
+          return {
+            ...stage,
+            conditions: nextConditions.length ? nextConditions : [createEmptyCondition(conditionSide)]
+          };
+        })
+      };
+    });
+  }
+
+  function addDraftStage() {
+    if (!selectedId) return;
+    setAllocationNotice("");
+    setStrategyDraft((current) => {
+      const baseDraft = current?.id === selectedId ? current : createStrategyDraft(selected);
+      if (!baseDraft) return baseDraft;
+      const baseStages = cloneStrategyStages(baseDraft, conditionSide);
+      return {
+        ...baseDraft,
+        [stageKey]: [...baseStages, createStrategyStage(conditionSide, baseStages.length + 1, null, "0")]
+      };
+    });
+  }
+
+  function removeDraftStage(stageIndex) {
+    if (!selectedId) return;
+    setAllocationNotice("");
+    setStrategyDraft((current) => {
+      const baseDraft = current?.id === selectedId ? current : createStrategyDraft(selected);
+      if (!baseDraft) return baseDraft;
+      const baseStages = cloneStrategyStages(baseDraft, conditionSide);
+      return {
+        ...baseDraft,
+        [stageKey]: baseStages.filter((_, index) => index !== stageIndex)
+      };
+    });
+  }
+
+  function renderStageAllocationInput(stage, stageIndex, className = "") {
+    return (
+      <label className={`grid grid-cols-[auto_72px_auto] items-center ${className}`}>
+        <span className="rounded-l border border-r-0 border-outline-variant bg-surface-container-highest px-2 py-1.5 font-label-caps text-label-caps text-on-surface-variant">비중</span>
+        <input
+          className="w-full border border-outline-variant bg-surface-container-lowest px-2 py-1.5 text-right font-label-mono text-label-mono text-on-surface"
+          value={stage.allocation}
+          onChange={(event) => updateDraftStage(stageIndex, { allocation: event.target.value })}
+        />
+        <span className="rounded-r border-y border-r border-outline-variant bg-surface-container-highest px-2 py-1.5 font-label-mono text-label-mono text-on-surface-variant">%</span>
+      </label>
+    );
+  }
+
+  function normalizeDraftStages(draft, side) {
+    const stages = cloneStrategyStages(draft, side);
+    let usedAllocation = 0;
+    return stages.map((stage, index) => {
+      const maxAllocation = Math.max(0, 100 - usedAllocation);
+      const allocation = formatAllocationAmount(Math.min(getAllocationAmount(stage.allocation), maxAllocation));
+      usedAllocation += getAllocationAmount(allocation);
+
+      if (index === 0) {
+        return {
+          ...stage,
+          allocation,
+          triggerType: "conditions",
+          triggerOperator: "충족",
+          triggerValue: "",
+          conditions: cloneStrategyConditions(stage.conditions, side)
+        };
+      }
+
+      return {
+        ...stage,
+        allocation,
+        triggerType: "percent",
+        triggerOperator: stage.triggerOperator || (side === "buy" ? "하락" : "상승"),
+        triggerValue: String(stage.triggerValue || (side === "buy" ? "3" : "5")),
+        conditions: []
       };
     });
   }
 
   function saveSelectedStrategySettings() {
     if (!selectedId || !selectedDraft) return;
+    const savedBuyStages = normalizeDraftStages(selectedDraft, "buy");
+    const savedSellStages = normalizeDraftStages(selectedDraft, "sell");
+    const savedTargetStocks = selectedDraft.scope === "개별 종목" ? [...new Set((selectedDraft.targetStocks || []).filter((code) => getStockByCode(code)))] : [];
+    const savedTarget = selectedDraft.scope === "개별 종목" ? summarizeTargetStocks(savedTargetStocks) : selectedDraft.target;
     const savedDraft = {
       ...selectedDraft,
       name: selectedDraft.name.trim() || "이름 없는 전략",
-      buyConditions: selectedDraft.buyConditions.map((condition) => [...condition]),
-      sellConditions: selectedDraft.sellConditions.map((condition) => [...condition])
+      target: savedTarget,
+      targetStocks: savedTargetStocks,
+      buyStages: savedBuyStages,
+      sellStages: savedSellStages,
+      buyConditions: savedBuyStages.length ? cloneStrategyConditions(savedBuyStages[0]?.conditions, "buy") : [],
+      sellConditions: savedSellStages.length ? cloneStrategyConditions(savedSellStages[0]?.conditions, "sell") : []
     };
 
     setStrategies((current) =>
@@ -1980,6 +2275,9 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
           orderMode: savedDraft.orderMode,
           scope: savedDraft.scope,
           target: savedDraft.target,
+          targetStocks: savedDraft.targetStocks,
+          buyStages: savedDraft.buyStages,
+          sellStages: savedDraft.sellStages,
           buyConditions: savedDraft.buyConditions,
           sellConditions: savedDraft.sellConditions
         };
@@ -1987,34 +2285,6 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
     );
     setStrategyDraft(savedDraft);
     setImportMessage(`${savedDraft.name} 설정을 저장했습니다.`);
-  }
-
-  function updateBacktestStartDate(value) {
-    setBacktestDates((current) => {
-      if (value < current.minStartDate) {
-        return {
-          ...current,
-          startDate: current.minStartDate,
-          warning: `시작일은 현재일 기준 90일 전인 ${current.minStartDate}보다 이전으로 설정할 수 없습니다.`
-        };
-      }
-
-      return { ...current, startDate: value, warning: "" };
-    });
-  }
-
-  function updateBacktestEndDate(value) {
-    setBacktestDates((current) => {
-      if (value > current.maxEndDate) {
-        return {
-          ...current,
-          endDate: current.maxEndDate,
-          warning: `종료일은 현재일인 ${current.maxEndDate} 이후로 설정할 수 없습니다.`
-        };
-      }
-
-      return { ...current, endDate: value, warning: "" };
-    });
   }
 
   function updateStatus(status) {
@@ -2036,15 +2306,17 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
       orderMode: "승인 후 주문",
       scope: "개별 종목",
       target: "삼성전자",
+      targetStocks: [stocks[0].code],
       returnRate: "0.0%",
       winRate: "0%",
       mode: executionMode,
-      buyConditions: defaultBuyConditions,
-      sellConditions: defaultSellConditions
+      buyStages: [createStrategyStage("buy", 1, [createEmptyCondition("buy")], "50")],
+      sellStages: [createStrategyStage("sell", 1, [createEmptyCondition("sell")], "50")],
+      buyConditions: [createEmptyCondition("buy")],
+      sellConditions: [createEmptyCondition("sell")]
     };
     setStrategies((current) => [next, ...current]);
     setSelectedId(next.id);
-    setBacktestStrategy(next.id);
   }
 
   function importSelectedStrategy() {
@@ -2064,7 +2336,6 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
     };
     setStrategies((current) => [imported, ...current]);
     setSelectedId(imported.id);
-    setBacktestStrategy(imported.id);
     setImportMessage(`${sourceModeLabel} 모드의 ${imported.name} 전략을 중지 상태로 가져왔습니다.`);
     setShowImportPicker(false);
   }
@@ -2110,7 +2381,7 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
           <div className="p-widget-padding border-b border-outline-variant">
             <div className="flex items-center justify-between mb-3">
               <h3 className="font-headline-md text-headline-md text-on-surface">전략 목록</h3>
-              <span className="font-label-mono text-label-mono text-secondary">{filteredStrategies.length}/{strategies.length}개 · {modeLabel}</span>
+              <span className="font-label-mono text-label-mono text-secondary">{filteredStrategies.length}개</span>
             </div>
             <div className="grid grid-cols-2 gap-gutter">
               <div className="relative">
@@ -2225,7 +2496,14 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
                       className={`py-2 rounded border font-label-caps text-label-caps ${selectedScope === item ? "border-primary bg-primary/10 text-primary" : "border-outline-variant text-on-surface-variant hover:bg-surface-container-highest"}`}
                       key={item}
                       type="button"
-                      onClick={() => updateStrategyDraft({ scope: item, target: item === "전체 종목" ? "전체 종목" : item === "종목 그룹" ? Object.keys(favoriteGroups)[0] || "관심 그룹 없음" : "삼성전자" })}
+                      onClick={() => {
+                        const nextTargetStocks = item === "개별 종목" ? selectedTargetCodes.length ? selectedTargetCodes : [stocks[0].code] : [];
+                        updateStrategyDraft({
+                          scope: item,
+                          targetStocks: nextTargetStocks,
+                          target: item === "전체 종목" ? "전체 종목" : item === "종목 그룹" ? Object.keys(favoriteGroups)[0] || "관심 그룹 없음" : summarizeTargetStocks(nextTargetStocks)
+                        });
+                      }}
                     >
                       {item}
                     </button>
@@ -2233,14 +2511,67 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
                 </div>
                 <div className="mt-gutter">
                   {selectedScope === "개별 종목" ? (
-                    <div className="relative">
-                      <Icon className="absolute left-3 top-1/2 -translate-y-1/2 text-outline text-[20px]">search</Icon>
-                      <input
-                        className="w-full bg-surface-container-lowest border border-outline-variant rounded pl-10 pr-3 py-2 font-body-md text-body-md text-on-surface"
-                        placeholder="종목명 또는 코드 검색"
-                        value={selectedDraft?.target || ""}
-                        onChange={(event) => updateStrategyDraft({ target: event.target.value })}
-                      />
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-[1fr_auto] gap-gutter">
+                        <div className="relative">
+                          <Icon className="absolute left-3 top-1/2 -translate-y-1/2 text-outline text-[20px]">search</Icon>
+                          <input
+                            className="w-full bg-surface-container-lowest border border-outline-variant rounded pl-10 pr-3 py-2 font-body-md text-body-md text-on-surface"
+                            list="strategy-stock-options"
+                            placeholder="종목명 또는 코드 검색"
+                            value={stockSearch}
+                            onChange={(event) => {
+                              const nextValue = event.target.value;
+                              const pickedStock = stocks.find((stock) => formatStockOptionValue(stock) === nextValue);
+                              if (pickedStock) {
+                                updateTargetStocks([...selectedTargetCodes, pickedStock.code]);
+                                setStockSearch("");
+                                return;
+                              }
+                              setStockSearch(nextValue);
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                event.preventDefault();
+                                addTargetStock();
+                              }
+                            }}
+                          />
+                        </div>
+                        <button
+                          className="inline-flex items-center justify-center gap-1 rounded border border-outline-variant bg-surface-container-high px-3 py-2 font-label-caps text-label-caps text-primary hover:bg-surface-container-highest"
+                          type="button"
+                          onClick={() => addTargetStock()}
+                        >
+                          <Icon className="text-[16px]">add</Icon>
+                          추가
+                        </button>
+                      </div>
+                      <datalist id="strategy-stock-options">
+                        {stocks.map((stock) => <option key={stock.code} value={formatStockOptionValue(stock)}>{stock.market}</option>)}
+                      </datalist>
+                      <div className="flex min-h-8 flex-wrap gap-2">
+                        {selectedTargetStocks.length ? (
+                          selectedTargetStocks.map((stock) => (
+                            <span
+                              className="inline-flex items-center gap-1 rounded border border-outline-variant bg-surface-container-high py-1 pl-2 pr-1 font-body-sm text-body-sm text-on-surface"
+                              key={stock.code}
+                            >
+                              <span>{stock.name}</span>
+                              <button
+                                className="inline-flex h-5 w-5 items-center justify-center rounded text-on-surface-variant hover:bg-error/10 hover:text-error"
+                                type="button"
+                                onClick={() => removeTargetStock(stock.code)}
+                                aria-label={`${stock.name} 삭제`}
+                              >
+                                <Icon className="text-[15px]">close</Icon>
+                              </button>
+                            </span>
+                          ))
+                        ) : (
+                          <span className="font-body-sm text-body-sm text-on-surface-variant">선택된 종목이 없습니다.</span>
+                        )}
+                      </div>
                     </div>
                   ) : null}
                   {selectedScope === "종목 그룹" ? (
@@ -2253,11 +2584,29 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
                         {Object.keys(favoriteGroups).map((group) => <option key={group}>{group}</option>)}
                       </select>
                     ) : (
-                      <button className="px-3 py-2 rounded bg-primary-container text-on-primary-container font-body-md text-body-md" type="button" onClick={() => navigate("market")}>관심 종목 설정으로 이동</button>
+                      <div className="rounded border border-outline-variant bg-surface-container-low p-3">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="flex items-start gap-3">
+                            <Icon className="mt-0.5 text-primary">folder_open</Icon>
+                            <div>
+                              <p className="font-title-sm text-title-sm text-on-surface">등록된 종목 그룹이 없습니다.</p>
+                              <p className="mt-1 font-body-sm text-body-sm text-on-surface-variant">시장 화면에서 관심 종목을 그룹으로 묶으면 이 전략의 대상으로 선택할 수 있습니다.</p>
+                            </div>
+                          </div>
+                          <button
+                            className="inline-flex items-center justify-center gap-1 rounded border border-outline-variant bg-surface-container-high px-3 py-2 font-label-caps text-label-caps text-primary hover:bg-surface-container-highest"
+                            type="button"
+                            onClick={() => navigate("market")}
+                          >
+                            시장에서 설정
+                            <Icon className="text-[16px]">arrow_forward</Icon>
+                          </button>
+                        </div>
+                      </div>
                     )
                   ) : null}
                   {selectedScope === "전체 종목" ? (
-                    <p className="bg-surface-container-low rounded border border-outline-variant p-3 font-body-sm text-body-sm text-on-surface-variant">조건식 입력 없이 전체 종목을 대상으로 전략을 적용합니다.</p>
+                    <p className="bg-surface-container-low rounded border border-outline-variant p-3 font-body-sm text-body-sm text-on-surface-variant">조건식을 통해 전체 종목을 대상으로 전략을 적용합니다.</p>
                   ) : null}
                 </div>
               </div>
@@ -2265,57 +2614,155 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
               <div>
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-2">
                   <p className="font-label-caps text-label-caps text-on-surface-variant">지표 조건</p>
-                  <div className="grid grid-cols-2 gap-gutter sm:w-[260px]">
-                    {[
-                      ["buy", "매수 조건"],
-                      ["sell", "매도 조건"]
-                    ].map(([side, label]) => (
-                      <button className={`py-2 rounded border font-label-caps text-label-caps ${conditionSide === side ? "border-primary bg-primary/10 text-primary" : "border-outline-variant text-on-surface-variant hover:bg-surface-container-highest"}`} key={side} type="button" onClick={() => setConditionSide(side)}>
-                        {label}
-                      </button>
-                    ))}
+                  <div className="flex flex-col gap-gutter sm:flex-row sm:items-center">
+                    <div className="grid grid-cols-2 gap-gutter sm:w-[260px]">
+                      {[
+                        ["buy", "매수 단계"],
+                        ["sell", "매도 단계"]
+                      ].map(([side, label]) => (
+                        <button className={`py-2 rounded border font-label-caps text-label-caps ${conditionSide === side ? "border-primary bg-primary/10 text-primary" : "border-outline-variant text-on-surface-variant hover:bg-surface-container-highest"}`} key={side} type="button" onClick={() => setConditionSide(side)}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      className="inline-flex items-center justify-center gap-1 rounded border border-outline-variant px-3 py-2 font-label-caps text-label-caps text-primary hover:bg-surface-container-highest"
+                      type="button"
+                      onClick={addDraftStage}
+                    >
+                      <Icon className="text-[16px]">add</Icon>
+                      {activeStages.length + 1}차 {conditionSide === "buy" ? "매수" : "매도"} 추가
+                    </button>
                   </div>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-gutter">
-                  {activeConditions.map(([indicator, operator, value], index) => (
-                    <div className="grid grid-cols-3 gap-gutter bg-surface-container-low rounded border border-outline-variant p-3" key={`${conditionSide}-${index}`}>
-                      <select
-                        className="bg-surface-container-lowest border border-outline-variant rounded px-2 py-2 font-body-sm text-body-sm text-on-surface"
-                        value={indicator}
-                        onChange={(event) => updateDraftCondition(index, 0, event.target.value)}
-                      >
-                        <option>{indicator}</option>
-                        <option>이동평균선</option>
-                        <option>MACD</option>
-                        <option>체결강도</option>
-                        <option>거래량 증가율</option>
-                        <option>RSI</option>
-                        <option>현재가</option>
-                        <option>외국인 순매수</option>
-                        <option>기관 순매수</option>
-                        <option>거래대금</option>
-                        <option>손절률</option>
-                        <option>수익률</option>
-                        <option>거래량 감소율</option>
-                      </select>
-                      <select
-                        className="bg-surface-container-lowest border border-outline-variant rounded px-2 py-2 font-body-sm text-body-sm text-on-surface"
-                        value={operator}
-                        onChange={(event) => updateDraftCondition(index, 1, event.target.value)}
-                      >
-                        <option>{operator}</option>
-                        <option>이상</option>
-                        <option>이하</option>
-                        <option>상향 돌파</option>
-                        <option>하향 이탈</option>
-                      </select>
-                      <input
-                        className="bg-surface-container-lowest border border-outline-variant rounded px-2 py-2 font-label-mono text-label-mono text-right text-on-surface"
-                        value={value}
-                        onChange={(event) => updateDraftCondition(index, 2, event.target.value)}
-                      />
+                {allocationNotice ? (
+                  <div className="mb-2 rounded border border-error/30 bg-error/10 px-3 py-2 font-body-sm text-body-sm text-error">
+                    {allocationNotice}
+                  </div>
+                ) : null}
+                <div className="grid grid-cols-1 gap-gutter">
+                  {!activeStages.length ? (
+                    <div className="rounded border border-outline-variant bg-surface-container-low p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2">
+                          <Icon className="text-on-surface-variant">block</Icon>
+                          <span className="font-title-sm text-title-sm text-on-surface">{conditionSide === "buy" ? "매수 단계 없음" : "매도 단계 없음"}</span>
+                        </div>
+                        <span className="font-body-sm text-body-sm text-on-surface-variant">
+                          {conditionSide === "buy" ? "조건에 따라 매도만 실행합니다." : "조건에 따라 매수만 실행합니다."}
+                        </span>
+                      </div>
                     </div>
-                  ))}
+                  ) : null}
+                  {activeStages.map((stage, stageIndex) => {
+                    const stageLabel = `${stageIndex + 1}차 ${conditionSide === "buy" ? "매수" : "매도"}`;
+                    const previousStageLabel = `${stageIndex}차 ${conditionSide === "buy" ? "매수" : "매도"} 대비`;
+                    const tone = conditionSide === "buy" ? "secondary" : "tertiary";
+                    const stageConditions = stageIndex === 0 ? cloneStrategyConditions(stage.conditions, conditionSide) : [];
+                    const triggerOperatorOptions = ["하락", "상승"];
+
+                    return (
+                      <div className="group relative rounded border border-outline-variant bg-surface-container-low p-2 space-y-2" key={stage.id || `${conditionSide}-${stageIndex}`}>
+                        <button
+                          className="absolute -right-1 -top-1 inline-flex h-6 w-6 items-center justify-center rounded border border-outline-variant bg-surface-container-low text-on-surface-variant/70 shadow-sm transition-colors hover:bg-surface-container-highest hover:text-error sm:opacity-0 sm:group-hover:opacity-100"
+                          type="button"
+                          aria-label={`${stageLabel} 삭제`}
+                          onClick={() => removeDraftStage(stageIndex)}
+                        >
+                          <Icon className="text-[16px]">delete</Icon>
+                        </button>
+                        <div className="flex items-start justify-between gap-gutter">
+                          <div className="flex items-center gap-2">
+                            <Badge tone={tone}>{stageLabel}</Badge>
+                          </div>
+                          {renderStageAllocationInput(stage, stageIndex, "shrink-0")}
+                        </div>
+
+                        {stageIndex === 0 ? (
+                          <div className="space-y-2">
+                            {stageConditions.map(([indicator, operator, value], conditionIndex) => (
+                              <div className="grid grid-cols-1 gap-gutter md:grid-cols-[1.1fr_0.9fr_1fr_auto]" key={`${stage.id}-${conditionIndex}`}>
+                                <label className="block">
+                                  <span className="font-label-caps text-label-caps text-on-surface-variant md:hidden">지표</span>
+                                  <select
+                                    className="mt-1 w-full rounded border border-outline-variant bg-surface-container-lowest px-2 py-1.5 font-body-sm text-body-sm text-on-surface md:mt-0"
+                                    value={indicator}
+                                    onChange={(event) => updateDraftStageCondition(stageIndex, conditionIndex, 0, event.target.value)}
+                                  >
+                                    {[indicator, ...conditionIndicatorOptions.filter((option) => option !== indicator)].map((option) => (
+                                      <option key={option}>{option}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label className="block">
+                                  <span className="font-label-caps text-label-caps text-on-surface-variant md:hidden">조건</span>
+                                  <select
+                                    className="mt-1 w-full rounded border border-outline-variant bg-surface-container-lowest px-2 py-1.5 font-body-sm text-body-sm text-on-surface md:mt-0"
+                                    value={operator}
+                                    onChange={(event) => updateDraftStageCondition(stageIndex, conditionIndex, 1, event.target.value)}
+                                  >
+                                    {[operator, ...conditionOperatorOptions.filter((option) => option !== operator)].map((option) => (
+                                      <option key={option}>{option}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label className="block">
+                                  <span className="font-label-caps text-label-caps text-on-surface-variant md:hidden">값</span>
+                                  <input
+                                    className="mt-1 w-full rounded border border-outline-variant bg-surface-container-lowest px-2 py-1.5 text-right font-label-mono text-label-mono text-on-surface md:mt-0"
+                                    value={value}
+                                    onChange={(event) => updateDraftStageCondition(stageIndex, conditionIndex, 2, event.target.value)}
+                                  />
+                                </label>
+                                <button
+                                  className="inline-flex h-9 w-full items-center justify-center rounded border border-outline-variant text-on-surface-variant hover:bg-surface-container-highest hover:text-error md:w-9"
+                                  type="button"
+                                  aria-label={`${stageLabel} 조건 삭제`}
+                                  onClick={() => removeDraftStageCondition(stageIndex, conditionIndex)}
+                                >
+                                  <Icon className="text-[18px]">close</Icon>
+                                </button>
+                              </div>
+                            ))}
+                            <button
+                              className="inline-flex items-center justify-center gap-1 rounded border border-outline-variant px-3 py-1.5 font-label-caps text-label-caps text-primary hover:bg-surface-container-highest"
+                              type="button"
+                              onClick={() => addDraftStageCondition(stageIndex)}
+                            >
+                              <Icon className="text-[16px]">add</Icon>
+                              1차 조건 추가
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 gap-gutter md:grid-cols-2">
+                            <label className="block">
+                              <span className="font-label-caps text-label-caps text-on-surface-variant">{previousStageLabel}</span>
+                              <select
+                                className="mt-1 w-full rounded border border-outline-variant bg-surface-container-lowest px-2 py-1.5 font-body-sm text-body-sm text-on-surface"
+                                value={stage.triggerOperator}
+                                onChange={(event) => updateDraftStage(stageIndex, { triggerOperator: event.target.value })}
+                              >
+                                {[stage.triggerOperator, ...triggerOperatorOptions.filter((option) => option !== stage.triggerOperator)].map((option) => (
+                                  <option key={option}>{option}</option>
+                                ))}
+                              </select>
+                            </label>
+                            <label className="block">
+                              <span className="font-label-caps text-label-caps text-on-surface-variant">값</span>
+                              <div className="mt-1 flex">
+                                <input
+                                  className="w-full rounded-l border border-outline-variant bg-surface-container-lowest px-2 py-1.5 text-right font-label-mono text-label-mono text-on-surface"
+                                  value={stage.triggerValue}
+                                  onChange={(event) => updateDraftStage(stageIndex, { triggerType: "percent", triggerValue: event.target.value })}
+                                />
+                                <span className="rounded-r border-y border-r border-outline-variant bg-surface-container-highest px-2 py-1.5 font-label-mono text-label-mono text-on-surface-variant">%</span>
+                              </div>
+                            </label>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -2327,64 +2774,6 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
             </div>
           </Section>
 
-          <Section className="section-scroll">
-            <div className="p-widget-padding border-b border-outline-variant flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Icon className="text-secondary">science</Icon>
-                <h3 className="font-headline-md text-headline-md text-on-surface">모의투자 기반 백테스트</h3>
-              </div>
-              <button className="px-3 py-2 rounded bg-secondary-container text-on-secondary-container font-label-caps text-label-caps hover:brightness-110" type="button">백테스트 실행</button>
-            </div>
-            <div className="p-widget-padding space-y-gutter">
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-gutter">
-                <label className="block">
-                  <span className="font-label-caps text-label-caps text-on-surface-variant">전략 선택</span>
-                  <select className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-body-md text-body-md text-on-surface" value={backtestStrategy} onChange={(event) => setBacktestStrategy(Number(event.target.value))}>
-                    {strategies.map((strategy) => <option key={strategy.id} value={strategy.id}>{strategy.name}</option>)}
-                  </select>
-                </label>
-                <label className="block">
-                  <span className="font-label-caps text-label-caps text-on-surface-variant">시작일</span>
-                  <input
-                    className={`mt-1 w-full bg-surface-container-lowest border rounded px-3 py-2 font-label-mono text-label-mono text-on-surface ${backtestDates.warning.startsWith("시작일") ? "border-error" : "border-outline-variant"}`}
-                    type="date"
-                    value={backtestDates.startDate}
-                    min={backtestDates.minStartDate}
-                    max={backtestDates.maxEndDate}
-                    onChange={(event) => updateBacktestStartDate(event.target.value)}
-                  />
-                </label>
-                <label className="block">
-                  <span className="font-label-caps text-label-caps text-on-surface-variant">종료일</span>
-                  <input
-                    className="mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded px-3 py-2 font-label-mono text-label-mono text-on-surface"
-                    type="date"
-                    value={backtestDates.endDate}
-                    min={backtestDates.minStartDate}
-                    max={backtestDates.maxEndDate}
-                    onChange={(event) => updateBacktestEndDate(event.target.value)}
-                  />
-                </label>
-                <NumberInput label="초기 자금" value="10,000,000" suffix="원" />
-              </div>
-              <div className={`rounded border p-3 font-body-sm text-body-sm ${backtestDates.warning ? "border-error/30 bg-error/10 text-error" : "border-outline-variant bg-surface-container-low text-on-surface-variant"}`}>
-                {backtestDates.warning || `백테스트 기간은 현재일 ${backtestDates.maxEndDate} 기준 최근 90일(${backtestDates.minStartDate} 이후)까지만 설정할 수 있습니다.`}
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-gutter">
-                {[
-                  ["누적 수익률", "+12.4%", "secondary"],
-                  ["승률", "61.8%", "primary"],
-                  ["최대 낙폭", "-4.2%", "tertiary"],
-                  ["거래 횟수", "84회", "neutral"]
-                ].map(([label, value, tone]) => (
-                  <div className="bg-surface-container-low rounded border border-outline-variant p-3" key={label}>
-                    <p className="font-body-sm text-body-sm text-on-surface-variant">{label}</p>
-                    <p className={`font-headline-md text-headline-md mt-1 ${tone === "secondary" ? "text-secondary" : tone === "primary" ? "text-primary" : tone === "tertiary" ? "text-tertiary" : "text-on-surface"}`}>{value}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </Section>
         </div>
       </section>
 
@@ -2452,6 +2841,367 @@ function StrategyPage({ navigate, favoriteGroups, executionMode, strategies, set
           </div>
         </div>
       ) : null}
+    </>
+  );
+}
+
+function parsePercentValue(value) {
+  const match = String(value ?? "").match(/-?\d+(\.\d+)?/);
+  return match ? Number(match[0]) : 0;
+}
+
+function parseCurrencyInput(value) {
+  const amount = Number(String(value ?? "").replace(/[^\d]/g, ""));
+  return Number.isFinite(amount) && amount > 0 ? amount : 10000000;
+}
+
+function formatSignedPercent(value) {
+  return `${value > 0 ? "+" : ""}${value.toFixed(1)}%`;
+}
+
+function formatCurrencyShort(value) {
+  if (value >= 100000000) return `${(value / 100000000).toFixed(1)}억 원`;
+  if (value >= 10000) return `${Math.round(value / 10000).toLocaleString("ko-KR")}만 원`;
+  return `${Math.round(value).toLocaleString("ko-KR")}원`;
+}
+
+function getDateRangeDays(startDate, endDate) {
+  const start = new Date(`${startDate}T00:00:00`);
+  const end = new Date(`${endDate}T00:00:00`);
+  const diff = Math.round((end.getTime() - start.getTime()) / 86400000) + 1;
+  return Number.isFinite(diff) ? Math.max(1, diff) : 1;
+}
+
+function buildBacktestResult(strategy, dates, initialCashText) {
+  if (!strategy) {
+    return {
+      periodLabel: `${dates.startDate} ~ ${dates.endDate}`,
+      metrics: [
+        ["누적 수익률", "대기 중", "neutral"],
+        ["승률", "대기 중", "neutral"],
+        ["최대 낙폭", "대기 중", "neutral"],
+        ["거래 횟수", "대기 중", "neutral"]
+      ],
+      equityCurve: Array.from({ length: 12 }, (_, index) => ({ label: index + 1, value: 100 })),
+      signals: [],
+      score: 0,
+      evaluationRows: [["전략 평가", "전략을 먼저 선택하세요."], ["리스크", "평가 대기"], ["예상 손익", "평가 대기"]],
+      opinion: "등록된 전략이 있으면 기간과 초기 자금을 기준으로 모의 성과를 계산합니다."
+    };
+  }
+
+  const initialCash = parseCurrencyInput(initialCashText);
+  const baseReturn = parsePercentValue(strategy.returnRate);
+  const baseWinRate = parsePercentValue(strategy.winRate);
+  const buyStages = cloneStrategyStages(strategy, "buy");
+  const sellStages = cloneStrategyStages(strategy, "sell");
+  const buyConditionCount = buyStages.length ? cloneStrategyConditions(buyStages[0]?.conditions, "buy").length : 0;
+  const sellConditionCount = sellStages.length ? cloneStrategyConditions(sellStages[0]?.conditions, "sell").length : 0;
+  const followUpStageCount = Math.max(0, buyStages.length + sellStages.length - 2);
+  const periodDays = getDateRangeDays(dates.startDate, dates.endDate);
+  const periodFactor = Math.max(0.65, Math.min(1.25, periodDays / 90));
+  const conditionBalance = buyConditionCount * 0.42 + sellConditionCount * 0.28 + followUpStageCount * 0.35;
+  const statusBoost = strategy.status === "활성" ? 1.1 : 0.35;
+  const returnRate = Number(((baseReturn * 0.74 + conditionBalance + statusBoost) * periodFactor).toFixed(1));
+  const winRate = Math.round(Math.min(82, Math.max(42, baseWinRate + buyConditionCount * 1.4 - sellConditionCount * 0.45 + followUpStageCount * 0.35 + statusBoost)));
+  const drawdown = Number(Math.max(2.8, 11.5 - returnRate * 0.34 + sellConditionCount * 0.22 + followUpStageCount * 0.18).toFixed(1));
+  const tradeCount = Math.max(12, Math.round(periodDays * Math.max(1, buyConditionCount + sellConditionCount + followUpStageCount) / 5.2));
+  const expectedProfit = initialCash * (returnRate / 100);
+  const score = Math.round(Math.min(94, Math.max(35, winRate + returnRate - drawdown * 1.2)));
+  const riskLevel = drawdown <= 4.5 ? "낮음" : drawdown <= 7 ? "보통" : "높음";
+  const scoreLabel = score >= 75 ? "양호" : score >= 60 ? "관찰 필요" : "보수 운용";
+  const buyAllocation = buyStages.map((stage, index) => `${index + 1}차 ${stage.allocation}%`).join(" · ");
+  const sellAllocation = sellStages.map((stage, index) => `${index + 1}차 ${stage.allocation}%`).join(" · ");
+  const seed = Number(strategy.id) || strategy.name.length;
+  const signalMap = new Map([
+    [2, "buy"],
+    [4, "sell"],
+    [7, "buy"],
+    [9, "sell"]
+  ]);
+  const equityCurve = Array.from({ length: 12 }, (_, index) => {
+    const progress = index / 11;
+    const wave = Math.sin((index + seed) * 1.08) * 1.25;
+    const pullback = index === 6 ? -drawdown * 0.42 : index === 8 ? -drawdown * 0.18 : 0;
+    return {
+      label: index + 1,
+      value: Number((100 + returnRate * progress + wave + pullback).toFixed(2)),
+      signal: signalMap.get(index) || ""
+    };
+  });
+  const signals = equityCurve
+    .filter((point) => point.signal)
+    .map((point, index) => ({
+      time: `${index + 1}차 신호`,
+      type: point.signal,
+      label: point.signal === "buy" ? "매수" : "매도",
+      value: formatSignedPercent(point.value - 100)
+    }));
+
+  return {
+    periodLabel: `${dates.startDate} ~ ${dates.endDate}`,
+    metrics: [
+      ["누적 수익률", formatSignedPercent(returnRate), "secondary"],
+      ["승률", `${winRate}%`, "primary"],
+      ["최대 낙폭", `-${drawdown.toFixed(1)}%`, "tertiary"],
+      ["거래 횟수", `${tradeCount}회`, "neutral"]
+    ],
+    equityCurve,
+    signals,
+    score,
+    evaluationRows: [
+      ["전략 평가", `${scoreLabel} · ${score}점`],
+      ["리스크", `${riskLevel} · 최대 낙폭 ${drawdown.toFixed(1)}%`],
+      ["예상 손익", `${expectedProfit >= 0 ? "+" : ""}${formatCurrencyShort(expectedProfit)}`],
+      ["조건 구성", `1차 매수 ${buyConditionCount}개 · 1차 매도 ${sellConditionCount}개`],
+      ["단계 구성", `매수 ${buyStages.length}단계 · 매도 ${sellStages.length}단계`],
+      ["매수 비중", buyAllocation],
+      ["매도 비중", sellAllocation]
+    ],
+    opinion: score >= 75
+      ? "수익 곡선이 우상향이고 낙폭이 제한적입니다. 자동 주문 전환 전에는 최근 신호 2~3회만 추가 확인하면 충분합니다."
+      : score >= 60
+        ? "성과는 양호하지만 낙폭 관리가 핵심입니다. 손절 조건을 한 단계 촘촘히 두고 주문 한도를 낮춰 검증하는 편이 좋습니다."
+        : "조건 수 대비 신호 품질이 약합니다. 매수 조건을 줄이거나 거래량/수급 조건을 더 명확히 한 뒤 다시 테스트하는 흐름이 적합합니다."
+  };
+}
+
+function BacktestChart({ result }) {
+  const values = result.equityCurve.map((point) => point.value);
+  const minValue = Math.min(...values);
+  const maxValue = Math.max(...values);
+  const spread = Math.max(1, maxValue - minValue);
+  const points = result.equityCurve.map((point, index) => {
+    const x = 4 + (index / Math.max(1, result.equityCurve.length - 1)) * 92;
+    const y = 35 - ((point.value - minValue) / spread) * 28;
+    return { ...point, x, y };
+  });
+  const linePoints = points.map((point) => `${point.x},${point.y}`).join(" ");
+
+  return (
+    <div className="rounded border border-outline-variant bg-surface-container-low p-3">
+      <svg className="h-[320px] w-full overflow-visible" viewBox="0 0 100 42" role="img" aria-label="백테스트 수익 곡선과 매수 매도 신호">
+        {[8, 17, 26, 35].map((y) => (
+          <line key={y} x1="4" x2="96" y1={y} y2={y} stroke="rgb(var(--outline-variant-rgb) / 0.55)" strokeDasharray="1.5 1.5" />
+        ))}
+        <polyline points={linePoints} fill="none" stroke="rgb(var(--primary-rgb) / 0.9)" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+        {points.map((point) => point.signal ? (
+          <g key={`${point.label}-${point.signal}`}>
+            <circle
+              cx={point.x}
+              cy={point.y}
+              r="1.7"
+              fill={point.signal === "buy" ? "rgb(var(--secondary-rgb))" : "rgb(var(--tertiary-rgb))"}
+              stroke="var(--surface-container-low)"
+              strokeWidth="0.7"
+            />
+            <text
+              x={point.x}
+              y={point.signal === "buy" ? Math.max(4, point.y - 2.8) : Math.min(40, point.y + 4.2)}
+              textAnchor="middle"
+              fontSize="2.6"
+              fill={point.signal === "buy" ? "rgb(var(--secondary-rgb))" : "rgb(var(--tertiary-rgb))"}
+            >
+              {point.signal === "buy" ? "매수" : "매도"}
+            </text>
+          </g>
+        ) : null)}
+      </svg>
+      <div className="mt-2 flex flex-wrap items-center gap-3 font-label-mono text-label-mono text-on-surface-variant">
+        <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-primary" />수익 곡선</span>
+        <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-secondary" />매수</span>
+        <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-tertiary" />매도</span>
+      </div>
+    </div>
+  );
+}
+
+function BacktestPage({ strategies, executionMode }) {
+  const [backtestStrategy, setBacktestStrategy] = useState(strategies[0]?.id || "");
+  const [backtestDates, setBacktestDates] = useState(getInitialBacktestDates);
+  const [initialCash, setInitialCash] = useState("10,000,000");
+  const [lastRunAt, setLastRunAt] = useState("");
+  const modeLabel = accountProfiles[executionMode].shortLabel;
+  const selectedStrategy = strategies.find((strategy) => strategy.id === backtestStrategy) || strategies[0];
+  const result = useMemo(() => buildBacktestResult(selectedStrategy, backtestDates, initialCash), [selectedStrategy, backtestDates, initialCash]);
+
+  useEffect(() => {
+    if (!strategies.length) {
+      setBacktestStrategy("");
+      return;
+    }
+    if (!strategies.some((strategy) => strategy.id === backtestStrategy)) {
+      setBacktestStrategy(strategies[0].id);
+    }
+  }, [strategies, backtestStrategy]);
+
+  function updateBacktestStartDate(value) {
+    setBacktestDates((current) => {
+      if (value < current.minStartDate) {
+        return {
+          ...current,
+          startDate: current.minStartDate,
+          warning: `시작일은 현재일 기준 90일 전인 ${current.minStartDate}보다 이전으로 설정할 수 없습니다.`
+        };
+      }
+      if (value > current.endDate) {
+        return {
+          ...current,
+          startDate: current.endDate,
+          warning: "시작일은 종료일보다 늦을 수 없습니다."
+        };
+      }
+      return { ...current, startDate: value, warning: "" };
+    });
+  }
+
+  function updateBacktestEndDate(value) {
+    setBacktestDates((current) => {
+      if (value > current.maxEndDate) {
+        return {
+          ...current,
+          endDate: current.maxEndDate,
+          warning: `종료일은 현재일인 ${current.maxEndDate} 이후로 설정할 수 없습니다.`
+        };
+      }
+      if (value < current.startDate) {
+        return {
+          ...current,
+          endDate: current.startDate,
+          warning: "종료일은 시작일보다 빠를 수 없습니다."
+        };
+      }
+      return { ...current, endDate: value, warning: "" };
+    });
+  }
+
+  return (
+    <>
+      <PageHeader
+        title="백테스트"
+        description={`${modeLabel} 모드 전략을 최근 90일 범위에서 검증하고 매수·매도 신호와 평가를 확인합니다.`}
+        action={
+          <div className="flex flex-col items-start gap-1 sm:items-end">
+            <button
+              className="inline-flex items-center gap-2 rounded bg-secondary-container px-4 py-2 font-label-caps text-label-caps text-on-secondary-container hover:brightness-110 disabled:opacity-50 disabled:hover:brightness-100"
+              type="button"
+              disabled={!strategies.length}
+              onClick={() => setLastRunAt(`${formatKoreanDate()} ${getKoreanOrderTime()}`)}
+            >
+              <Icon className="text-[16px]">play_arrow</Icon>
+              백테스트 실행
+            </button>
+            {lastRunAt ? <span className="font-label-mono text-label-mono text-on-surface-variant">최근 실행 {lastRunAt}</span> : null}
+          </div>
+        }
+      />
+
+      <Section>
+        <SectionTitle icon="tune" title="테스트 조건" meta={result.periodLabel} />
+        <div className="p-widget-padding space-y-gutter">
+          <div className="grid grid-cols-1 gap-gutter md:grid-cols-4">
+            <label className="block">
+              <span className="font-label-caps text-label-caps text-on-surface-variant">전략 선택</span>
+              <select
+                className="mt-1 w-full rounded border border-outline-variant bg-surface-container-lowest px-3 py-2 font-body-md text-body-md text-on-surface"
+                value={backtestStrategy}
+                disabled={!strategies.length}
+                onChange={(event) => setBacktestStrategy(Number(event.target.value))}
+              >
+                {strategies.map((strategy) => <option key={strategy.id} value={strategy.id}>{strategy.name}</option>)}
+              </select>
+            </label>
+            <label className="block">
+              <span className="font-label-caps text-label-caps text-on-surface-variant">시작일</span>
+              <input
+                className={`mt-1 w-full rounded border bg-surface-container-lowest px-3 py-2 font-label-mono text-label-mono text-on-surface ${backtestDates.warning.startsWith("시작일") ? "border-error" : "border-outline-variant"}`}
+                type="date"
+                value={backtestDates.startDate}
+                min={backtestDates.minStartDate}
+                max={backtestDates.maxEndDate}
+                onChange={(event) => updateBacktestStartDate(event.target.value)}
+              />
+            </label>
+            <label className="block">
+              <span className="font-label-caps text-label-caps text-on-surface-variant">종료일</span>
+              <input
+                className={`mt-1 w-full rounded border bg-surface-container-lowest px-3 py-2 font-label-mono text-label-mono text-on-surface ${backtestDates.warning.startsWith("종료일") ? "border-error" : "border-outline-variant"}`}
+                type="date"
+                value={backtestDates.endDate}
+                min={backtestDates.minStartDate}
+                max={backtestDates.maxEndDate}
+                onChange={(event) => updateBacktestEndDate(event.target.value)}
+              />
+            </label>
+            <label className="block">
+              <span className="font-label-caps text-label-caps text-on-surface-variant">초기 자금</span>
+              <div className="mt-1 flex">
+                <input
+                  className="w-full rounded-l border border-outline-variant bg-surface-container-lowest px-3 py-2 text-right font-label-mono text-label-mono text-on-surface"
+                  value={initialCash}
+                  onChange={(event) => setInitialCash(event.target.value)}
+                />
+                <span className="rounded-r border-y border-r border-outline-variant bg-surface-container-highest px-3 py-2 font-label-mono text-label-mono text-on-surface-variant">원</span>
+              </div>
+            </label>
+          </div>
+          <div className={`rounded border p-3 font-body-sm text-body-sm ${backtestDates.warning ? "border-error/30 bg-error/10 text-error" : "border-outline-variant bg-surface-container-low text-on-surface-variant"}`}>
+            {backtestDates.warning || `백테스트 기간은 현재일 ${backtestDates.maxEndDate} 기준 최근 90일(${backtestDates.minStartDate} 이후)까지만 설정할 수 있습니다.`}
+          </div>
+        </div>
+      </Section>
+
+      <div className="grid grid-cols-1 gap-gutter md:grid-cols-4">
+        {result.metrics.map(([label, value, tone]) => (
+          <div className="rounded-lg border border-outline-variant bg-surface-container p-widget-padding" key={label}>
+            <p className="font-body-sm text-body-sm text-on-surface-variant">{label}</p>
+            <p className={`mt-1 font-headline-md text-headline-md ${tone === "secondary" ? "text-secondary" : tone === "primary" ? "text-primary" : tone === "tertiary" ? "text-tertiary" : "text-on-surface"}`}>{value}</p>
+          </div>
+        ))}
+      </div>
+
+      <section className="grid grid-cols-1 gap-gutter xl:grid-cols-12">
+        <Section className="xl:col-span-8">
+          <SectionTitle icon="show_chart" title="수익 곡선" meta={selectedStrategy?.name || "전략 없음"} />
+          <div className="p-widget-padding">
+            <BacktestChart result={result} />
+          </div>
+        </Section>
+
+        <Section className="xl:col-span-4">
+          <SectionTitle icon="fact_check" title="전략 평가" meta={result.score ? `${result.score}점` : "대기"} tone="text-secondary" />
+          <div className="p-widget-padding space-y-gutter">
+            <div className="divide-y divide-outline-variant/40 rounded border border-outline-variant bg-surface-container-low">
+              {result.evaluationRows.map(([label, value]) => (
+                <div className="flex items-center justify-between gap-3 p-3" key={label}>
+                  <span className="font-body-sm text-body-sm text-on-surface-variant">{label}</span>
+                  <strong className="text-right font-title-sm text-title-sm text-on-surface">{value}</strong>
+                </div>
+              ))}
+            </div>
+            <div className="rounded border border-outline-variant bg-surface-container-low p-3">
+              <p className="font-label-caps text-label-caps text-secondary">운용 의견</p>
+              <p className="mt-2 font-body-md text-body-md text-on-surface-variant">{result.opinion}</p>
+            </div>
+            <div className="rounded border border-outline-variant bg-surface-container-low p-3">
+              <p className="font-label-caps text-label-caps text-on-surface-variant">최근 신호</p>
+              <div className="mt-2 space-y-2">
+                {result.signals.length ? result.signals.map((signal) => (
+                  <div className="flex items-center justify-between gap-3" key={`${signal.time}-${signal.type}`}>
+                    <span className="inline-flex items-center gap-2">
+                      <Badge tone={signal.type === "buy" ? "secondary" : "tertiary"}>{signal.label}</Badge>
+                      <span className="font-body-sm text-body-sm text-on-surface-variant">{signal.time}</span>
+                    </span>
+                    <span className="font-label-mono text-label-mono text-on-surface">{signal.value}</span>
+                  </div>
+                )) : (
+                  <p className="font-body-sm text-body-sm text-on-surface-variant">표시할 신호가 없습니다.</p>
+                )}
+              </div>
+            </div>
+          </div>
+        </Section>
+      </section>
     </>
   );
 }
@@ -2583,7 +3333,7 @@ function RecordPage() {
                 <div key={label}>
                   <p className="font-body-sm text-body-sm text-on-surface-variant mb-1">{label}</p>
                   <div className="flex items-end justify-between">
-                    <span className="font-display text-3xl font-bold text-on-surface">{value}</span>
+                    <span className="font-headline-lg text-headline-lg text-on-surface">{value}</span>
                     <span className="text-on-surface-variant font-label-mono text-label-mono">{meta}</span>
                   </div>
                   <div className="h-px bg-outline-variant/30 mt-4" />
@@ -2736,7 +3486,7 @@ function SettingsPage({ theme, setTheme, nickname, updateNickname, executionMode
               <PasswordField label="현재 비밀번호" placeholder="현재 비밀번호" />
               <PasswordField label="새 비밀번호" placeholder="8자 이상" />
               <PasswordField label="새 비밀번호 확인" placeholder="다시 입력" />
-              <button className="self-end py-2 rounded bg-primary-container text-on-primary-container font-body-md text-body-md font-bold hover:brightness-110 transition-all" type="button" onClick={() => setPasswordMessage("보안 변경사항 적용 요청이 준비되었습니다. Supabase Auth 연결 후 실제 변경이 실행됩니다.")}>변경사항 적용</button>
+              <button className="self-end py-2 rounded bg-primary-container text-on-primary-container font-title-sm text-title-sm hover:brightness-110 transition-all" type="button" onClick={() => setPasswordMessage("보안 변경사항 적용 요청이 준비되었습니다. Supabase Auth 연결 후 실제 변경이 실행됩니다.")}>변경사항 적용</button>
             </div>
             <p className="font-body-sm text-body-sm text-on-surface-variant">{passwordMessage}</p>
           </div>
@@ -2882,12 +3632,12 @@ function SettingsPage({ theme, setTheme, nickname, updateNickname, executionMode
                 {kiwoomMessage}
               </p>
               <div className="flex flex-col sm:flex-row gap-gutter">
-                <button className="flex-1 py-2 rounded bg-primary-container text-on-primary-container font-label-caps text-label-caps hover:brightness-110 transition-all flex items-center justify-center gap-2" type="button" onClick={connectKiwoom}>
+                <button className="flex-1 py-2 rounded bg-primary-container text-on-primary-container font-title-sm text-title-sm hover:brightness-110 transition-all flex items-center justify-center gap-2" type="button" onClick={connectKiwoom}>
                   <Icon className="text-[16px]">link</Icon>
                   연결
                 </button>
                 <button
-                  className="px-4 py-2 rounded border border-outline-variant text-on-surface-variant font-label-caps text-label-caps hover:bg-surface-container-highest"
+                  className="px-4 py-2 rounded border border-outline-variant text-on-surface-variant font-title-sm text-title-sm hover:bg-surface-container-highest"
                   type="button"
                   onClick={() => {
                     setKiwoomCredentials((current) => ({ ...current, [executionMode]: { appKey: "", appSecret: "" } }));

@@ -2,7 +2,9 @@ body {
   margin: 0;
   background-color: var(--surface-container-lowest);
   color: var(--on-surface);
-  font-family: "Inter", sans-serif;
+  font-family: "Inter", "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
   overflow-x: hidden;
 }
 
