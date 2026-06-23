@@ -1672,10 +1672,10 @@ function MarketPage({ accountProfile, orders, setOrders, favoriteGroups, setFavo
               </div>
             </div>
             <div className="grid grid-cols-1 xl:grid-cols-12 gap-gutter p-widget-padding items-start">
-              <div className="xl:col-span-6 h-full">
+              <div className="xl:col-span-8 h-full">
                 <IntradayChart />
               </div>
-              <div className="xl:col-span-6 flex flex-col gap-gutter">
+              <div className="xl:col-span-4 flex flex-col gap-gutter">
                 <OrderBook current={selected.current} selectedPrice={orderPrice} onSelectPrice={setOrderPrice} />
               </div>
             </div>
