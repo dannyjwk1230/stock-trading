@@ -301,21 +301,18 @@ textarea {
 }
 
 .section-scroll {
-  max-height: min(680px, calc(100vh - 10rem));
   min-height: 0;
-  overflow-y: auto;
+  overflow: visible;
 }
 
 .section-scroll-tall {
-  max-height: min(820px, calc(100vh - 8rem));
   min-height: 0;
-  overflow-y: auto;
+  overflow: visible;
 }
 
 .section-scroll-sm {
-  max-height: min(520px, calc(100vh - 12rem));
   min-height: 0;
-  overflow-y: auto;
+  overflow: visible;
 }
 
 .section-body-scroll {
